@@ -1,0 +1,124 @@
+# Copyright (c) 2024-2026, The UW Lab Project Developers. (https://github.com/uw-lab/UWLab/blob/main/CONTRIBUTORS.md).
+# All Rights Reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Reset states tasks for IsaacLab."""
+
+import gymnasium as gym
+
+from . import agents
+
+#########################################################
+# Partial Assemblies Environment
+#########################################################
+gym.register(
+    id="OmniReset-PartialAssemblies-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={"env_cfg_entry_point": f"{__name__}.partial_assemblies_cfg:PartialAssembliesCfg"},
+    disable_env_checker=True,
+)
+
+#########################################################
+# Grasp Sampling Environment
+#########################################################
+gym.register(
+    id="OmniReset-Robotiq2f85-GraspSampling-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={"env_cfg_entry_point": f"{__name__}.grasp_sampling_cfg:Robotiq2f85GraspSamplingCfg"},
+    disable_env_checker=True,
+)
+
+#########################################################
+# Reset States Environments
+#########################################################
+gym.register(
+    id="OmniReset-UR5eRobotiq2f85-ObjectAnywhereEEAnywhere-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectAnywhereEEAnywhereResetStatesCfg"},
+)
+
+gym.register(
+    id="OmniReset-UR5eRobotiq2f85-ObjectRestingEEGrasped-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectRestingEEGraspedResetStatesCfg"},
+)
+
+gym.register(
+    id="OmniReset-UR5eRobotiq2f85-ObjectAnywhereEEGrasped-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectAnywhereEEGraspedResetStatesCfg"},
+)
+
+gym.register(
+    id="OmniReset-UR5eRobotiq2f85-ObjectPartiallyAssembledEEAnywhere-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectPartiallyAssembledEEAnywhereResetStatesCfg"},
+)
+
+gym.register(
+    id="OmniReset-UR5eRobotiq2f85-ObjectPartiallyAssembledEEGrasped-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectPartiallyAssembledEEGraspedResetStatesCfg"},
+)
+
+#########################################################
+# RL State Environments
+#########################################################
+# Protagonist RL State Environments
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCProtagonist-State-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85ProtagonistTrainCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Protagonist_PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCProtagonist-State-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Protagonist_PPORunnerCfg",
+    },
+)
+
+# Antagonist RL State Environments
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCAntagonist-State-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AntagonistTrainCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Antagonist_PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCAntagonist-State-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Antagonist_PPORunnerCfg",
+    },
+)
+
+# Adversarial RL State Environments
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCAdversary-State-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCTrainCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AdversarialPPORunnerCfg",
+    },
+)
