@@ -46,11 +46,17 @@ x-default-uw-lab-volumes: &default-uw-lab-volumes
     source: ../scripts
     target: ${DOCKER_UWLAB_PATH}/scripts
   - type: bind
+    source: ../scripts_v2
+    target: ${DOCKER_UWLAB_PATH}/scripts_v2
+  - type: bind
     source: ../docs
     target: ${DOCKER_UWLAB_PATH}/docs
   - type: bind
     source: ../tools
     target: ${DOCKER_UWLAB_PATH}/tools
+  - type: bind
+    source: ../rsl_rl
+    target: ${DOCKER_UWLAB_PATH}/rsl_rl
     # The effect of these volumes is twofold:
     # 1. Prevent root-owned files from flooding the _build and logs dir
     #    on the host machine

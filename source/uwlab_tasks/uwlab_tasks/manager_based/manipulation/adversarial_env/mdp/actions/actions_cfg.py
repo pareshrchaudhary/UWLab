@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import MISSING
 
 from isaaclab.envs.mdp.actions.actions_cfg import OperationalSpaceControllerActionCfg
-from isaaclab.managers.action_manager import ActionTerm
+from isaaclab.managers.action_manager import ActionTerm, ActionTermCfg
 from isaaclab.utils import configclass
 
 from . import task_space_actions
@@ -32,3 +32,16 @@ class TransformedOperationalSpaceControllerActionCfg(OperationalSpaceControllerA
 
     input_clip: tuple[float, float] | None = None
     """Input clip values for the action."""
+
+
+@configclass
+class AdversaryActionCfg(ActionTermCfg):
+    """Action term that stores adversary outputs (used by reset-time parameter application).
+
+    The processed action is always zero (so it never affects per-step action penalties).
+    Reset events read `raw_actions` directly.
+    """
+
+    class_type: type[ActionTerm] = task_space_actions.AdversaryAction
+
+    action_dim: int = 9

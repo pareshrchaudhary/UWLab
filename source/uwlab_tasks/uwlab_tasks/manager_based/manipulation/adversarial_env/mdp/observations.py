@@ -217,10 +217,14 @@ def get_joint_damping(
     asset: RigidObject | Articulation = env.scene[asset_cfg.name]
     return asset.data.joint_damping.view(env.num_envs, -1)
 
-
 def time_left(env) -> torch.Tensor:
     if hasattr(env, "episode_length_buf"):
         life_left = 1 - (env.episode_length_buf.float() / env.max_episode_length)
     else:
         life_left = torch.zeros(env.num_envs, device=env.device, dtype=torch.float)
     return life_left.view(-1, 1)
+
+def adversary_noise(env: ManagerBasedEnv, dim: int = 8) -> torch.Tensor:
+    """Standard normal noise for adversary policy input."""
+
+    return torch.randn((env.num_envs, dim), device=env.device, dtype=torch.float)

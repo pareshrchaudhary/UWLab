@@ -13,7 +13,7 @@ from uwlab_assets.robots.ur5e_robotiq_gripper.actions import ROBOTIQ_COMPLIANT_J
 
 from uwlab_tasks.manager_based.manipulation.adversarial_env.mdp.utils import read_metadata_from_usd_directory
 
-from ...mdp.actions.actions_cfg import TransformedOperationalSpaceControllerActionCfg
+from ...mdp.actions.actions_cfg import AdversaryActionCfg, TransformedOperationalSpaceControllerActionCfg
 
 UR5E_ROBOTIQ_2F85_RELATIVE_OSC = TransformedOperationalSpaceControllerActionCfg(
     asset_name="robot",
@@ -43,9 +43,12 @@ UR5E_ROBOTIQ_2F85_RELATIVE_OSC = TransformedOperationalSpaceControllerActionCfg(
     damping_ratio_scale=1.0,
 )
 
+UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION = AdversaryActionCfg(action_dim=9)
+
 
 @configclass
 class Ur5eRobotiq2f85RelativeOSCAction:
     arm = UR5E_ROBOTIQ_2F85_RELATIVE_OSC
     gripper = ROBOTIQ_GRIPPER_BINARY_ACTIONS
     compliant_joints = ROBOTIQ_COMPLIANT_JOINTS
+    adversaryaction = UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION

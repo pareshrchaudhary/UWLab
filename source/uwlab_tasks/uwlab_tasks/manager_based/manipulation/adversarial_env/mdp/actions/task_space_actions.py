@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import isaaclab.utils.math as math_utils
 from isaaclab.envs.mdp.actions.task_space_actions import OperationalSpaceControllerAction
+from isaaclab.managers.action_manager import ActionTerm
 
 from . import actions_cfg
 
@@ -94,3 +95,37 @@ class TransformedOperationalSpaceControllerAction(OperationalSpaceControllerActi
     def transformed_actions(self) -> torch.Tensor:
         """Processed actions for operational space control."""
         return self._transformed_actions
+
+
+class AdversaryAction(ActionTerm):
+    """Stores adversary action outputs for reset-time parameter application.
+
+    - `raw_actions`: last adversary output vector (used by reset events)
+    - `processed_actions`: always zero (so it never affects per-step control / penalties)
+    """
+
+    cfg: actions_cfg.AdversaryActionCfg
+
+    def __init__(self, cfg: actions_cfg.AdversaryActionCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        self._raw_actions = torch.zeros(self.num_envs, self.cfg.action_dim, device=self.device)
+        self._processed_actions = torch.zeros_like(self._raw_actions)
+
+    @property
+    def action_dim(self) -> int:
+        return int(self.cfg.action_dim)
+
+    @property
+    def raw_actions(self) -> torch.Tensor:
+        return self._raw_actions
+
+    @property
+    def processed_actions(self) -> torch.Tensor:
+        return self._processed_actions
+
+    def process_actions(self, actions: torch.Tensor):
+        self._raw_actions[:] = actions.to(self.device)
+        self._processed_actions.zero_()
+
+    def apply_actions(self):
+        pass

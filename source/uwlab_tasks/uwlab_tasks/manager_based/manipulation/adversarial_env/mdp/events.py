@@ -1362,3 +1362,210 @@ def randomize_operational_space_controller_gains(
     controller._motion_d_gains_task[env_ids] = torch.diag_embed(
         2 * torch.diagonal(controller._motion_p_gains_task[env_ids], dim1=-2, dim2=-1).sqrt() * new_damping_ratios
     )
+
+
+def adversary_operational_space_controller_gains_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    adversary_action_name: str,
+    osc_action_name: str,
+    stiffness_scale_range: tuple[float, float],
+    damping_scale_range: tuple[float, float],
+    action_stiffness_index: int = 7,
+    action_damping_index: int = 8,
+) -> None:
+    """Set OSC stiffness/damping gains from adversary action (reset-only).
+
+    Uses two scalars from the adversary action vector:
+        - stiffness_scale at action_stiffness_index
+        - damping_scale at action_damping_index
+    Both are clamped to the provided ranges and applied uniformly to xyz and rpy blocks.
+    """
+
+    if env_ids is None:
+        env_ids = torch.arange(env.scene.num_envs, device=env.device)
+
+    # Get OSC action term (the one that owns the controller instance).
+    osc_term = env.action_manager._terms.get(osc_action_name)
+    if osc_term is None:
+        raise ValueError(f"Action term '{osc_action_name}' not found in action manager.")
+    if not hasattr(osc_term, "_osc") or not hasattr(osc_term._osc, "cfg"):
+        raise ValueError(f"Action term '{osc_action_name}' does not appear to be an operational space controller.")
+    controller = osc_term._osc
+
+    # Read adversary outputs.
+    adv_raw = _get_action_term_raw_actions(env, adversary_action_name)
+    a = adv_raw[env_ids]
+
+    original_stiffness = torch.tensor(controller.cfg.motion_stiffness_task, device=env.device)
+    original_damping = torch.tensor(controller.cfg.motion_damping_ratio_task, device=env.device)
+
+    for i in range(len(env_ids)):
+        env_id = env_ids[i : i + 1]
+        stiff_scale = torch.clamp(a[i, action_stiffness_index], stiffness_scale_range[0], stiffness_scale_range[1])
+        damp_scale = torch.clamp(a[i, action_damping_index], damping_scale_range[0], damping_scale_range[1])
+
+        new_stiffness = torch.zeros((1, 6), device=env.device)
+        new_stiffness[:, 0:3] = original_stiffness[0:3] * stiff_scale  # xyz
+        new_stiffness[:, 3:6] = original_stiffness[3:6] * stiff_scale  # rpy
+
+        controller._motion_p_gains_task[env_id] = torch.diag_embed(new_stiffness)
+        controller._motion_p_gains_task[env_id] = (
+            controller._selection_matrix_motion_task[env_id] @ controller._motion_p_gains_task[env_id]
+        )
+
+        new_damping_ratios = torch.zeros((1, 6), device=env.device)
+        new_damping_ratios[:, 0:3] = original_damping[0:3] * damp_scale  # xyz
+        new_damping_ratios[:, 3:6] = original_damping[3:6] * damp_scale  # rpy
+
+        controller._motion_d_gains_task[env_id] = torch.diag_embed(
+            2 * torch.diagonal(controller._motion_p_gains_task[env_id], dim1=-2, dim2=-1).sqrt() * new_damping_ratios
+        )
+
+
+def _get_action_term_raw_actions(env: ManagerBasedEnv, action_name: str) -> torch.Tensor:
+    """Fetch raw action tensor from the action manager."""
+
+    action_term = env.action_manager._terms.get(action_name)
+    if action_term is None:
+        raise ValueError(f"Action term '{action_name}' not found in action manager.")
+    if not hasattr(action_term, "raw_actions"):
+        raise ValueError(f"Action term '{action_name}' does not expose 'raw_actions'.")
+    raw_actions = action_term.raw_actions
+    if raw_actions is None:
+        raise ValueError(f"Action term '{action_name}' has no 'raw_actions' set.")
+    return raw_actions
+
+
+def adversary_robot_material_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    static_friction_range: tuple[float, float],
+    dynamic_friction_range: tuple[float, float],
+    num_buckets: int = 256,
+    make_consistent: bool = True,
+) -> None:
+    """Set robot material params from adversary action (reset-only).
+
+    Expected action layout (dim=7):
+        [0] static_friction (absolute)
+        [1] dynamic_friction (absolute)
+        [2] robot_mass_scale
+        [3] robot_joint_friction_scale
+        [4] robot_joint_armature_scale
+        [5] gripper_stiffness_scale
+        [6] gripper_damping_scale
+    """
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    a = raw_actions[env_ids]
+
+    # Use existing material randomization utility with degenerate ranges (value,value).
+    from isaaclab.envs.mdp import randomize_rigid_body_material
+
+    # Apply per-env (no range sampling).
+    for i in range(len(env_ids)):
+        env_id = env_ids[i : i + 1]
+        static_friction = float(torch.clamp(a[i, 0], static_friction_range[0], static_friction_range[1]))
+        dynamic_friction = float(torch.clamp(a[i, 1], dynamic_friction_range[0], dynamic_friction_range[1]))
+        randomize_rigid_body_material(
+            env=env,
+            env_ids=env_id,
+            static_friction_range=(static_friction, static_friction),
+            dynamic_friction_range=(dynamic_friction, dynamic_friction),
+            restitution_range=(0.0, 0.0),
+            num_buckets=num_buckets,
+            asset_cfg=asset_cfg,
+            make_consistent=make_consistent,
+        )
+
+
+def adversary_robot_mass_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    mass_scale_range: tuple[float, float],
+    recompute_inertia: bool = True,
+) -> None:
+    """Set robot mass scaling from adversary action (reset-only)."""
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    a = raw_actions[env_ids]
+
+    from isaaclab.envs.mdp import randomize_rigid_body_mass
+
+    for i in range(len(env_ids)):
+        env_id = env_ids[i : i + 1]
+        mass_scale = float(torch.clamp(a[i, 2], mass_scale_range[0], mass_scale_range[1]))
+        randomize_rigid_body_mass(
+            env=env,
+            env_ids=env_id,
+            asset_cfg=asset_cfg,
+            mass_distribution_params=(mass_scale, mass_scale),
+            operation="scale",
+            distribution="uniform",
+            recompute_inertia=recompute_inertia,
+        )
+
+
+def adversary_robot_joint_parameters_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    friction_scale_range: tuple[float, float],
+    armature_scale_range: tuple[float, float],
+) -> None:
+    """Set robot joint friction/armature scaling from adversary action (reset-only)."""
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    a = raw_actions[env_ids]
+
+    from isaaclab.envs.mdp import randomize_joint_parameters
+
+    for i in range(len(env_ids)):
+        env_id = env_ids[i : i + 1]
+        friction_scale = float(torch.clamp(a[i, 3], friction_scale_range[0], friction_scale_range[1]))
+        armature_scale = float(torch.clamp(a[i, 4], armature_scale_range[0], armature_scale_range[1]))
+        randomize_joint_parameters(
+            env=env,
+            env_ids=env_id,
+            asset_cfg=asset_cfg,
+            friction_distribution_params=(friction_scale, friction_scale),
+            armature_distribution_params=(armature_scale, armature_scale),
+            operation="scale",
+            distribution="uniform",
+        )
+
+
+def adversary_gripper_actuator_gains_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    stiffness_scale_range: tuple[float, float],
+    damping_scale_range: tuple[float, float],
+) -> None:
+    """Set gripper actuator stiffness/damping scaling from adversary action (reset-only)."""
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    a = raw_actions[env_ids]
+
+    from isaaclab.envs.mdp import randomize_actuator_gains
+
+    for i in range(len(env_ids)):
+        env_id = env_ids[i : i + 1]
+        stiffness_scale = float(torch.clamp(a[i, 5], stiffness_scale_range[0], stiffness_scale_range[1]))
+        damping_scale = float(torch.clamp(a[i, 6], damping_scale_range[0], damping_scale_range[1]))
+        randomize_actuator_gains(
+            env=env,
+            env_ids=env_id,
+            asset_cfg=asset_cfg,
+            stiffness_distribution_params=(stiffness_scale, stiffness_scale),
+            damping_distribution_params=(damping_scale, damping_scale),
+            operation="scale",
+            distribution="uniform",
+        )

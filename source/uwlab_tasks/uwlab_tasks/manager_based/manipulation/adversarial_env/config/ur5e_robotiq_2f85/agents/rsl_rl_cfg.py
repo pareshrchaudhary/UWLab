@@ -48,12 +48,13 @@ class Protagonist_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 @configclass
-class Antagonist_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 32
+class Adversary_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    # One-step adversary: only acts on reset (bandit-style).
+    num_steps_per_env = 1
     max_iterations = 40000
     save_interval = 100
     resume = False
-    experiment_name = "ur5e_robotiq_2f85_antagonist_agent"
+    experiment_name = "ur5e_robotiq_2f85_adversary_agent"
     policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -65,65 +66,32 @@ class Antagonist_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         state_dependent_std=False,
     )
     algorithm = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
+        # Make PPO behave closer to REINFORCE for the one-step setting:
+        # - no critic loss
+        # - single epoch/minibatch
+        value_loss_coef=0.0,
+        use_clipped_value_loss=False,
         normalize_advantage_per_mini_batch=False,
-        clip_param=0.2,
+        clip_param=0.0,
         entropy_coef=0.006,
-        num_learning_epochs=5,
-        num_mini_batches=4,
+        num_learning_epochs=1,
+        num_mini_batches=1,
         learning_rate=1.0e-4,
         schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
+        gamma=1.0,
+        lam=1.0,
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
-
-# @configclass
-# class Adversary_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
-#     num_steps_per_env = 32
-#     max_iterations = 40000
-#     save_interval = 100
-#     resume = False
-#     experiment_name = "ur5e_robotiq_2f85_adversary_agent"
-#     policy = RslRlFancyActorCriticCfg(
-#         init_noise_std=1.0,
-#         actor_obs_normalization=True,
-#         critic_obs_normalization=True,
-#         actor_hidden_dims=[512, 256, 128, 64],
-#         critic_hidden_dims=[512, 256, 128, 64],
-#         activation="elu",
-#         noise_std_type="gsde",
-#         state_dependent_std=False,
-#     )
-#     algorithm = RslRlPpoAlgorithmCfg(
-#         value_loss_coef=1.0,
-#         use_clipped_value_loss=True,
-#         normalize_advantage_per_mini_batch=False,
-#         clip_param=0.2,
-#         entropy_coef=0.006,
-#         num_learning_epochs=5,
-#         num_mini_batches=4,
-#         learning_rate=1.0e-4,
-#         schedule="adaptive",
-#         gamma=0.99,
-#         lam=0.95,
-#         desired_kl=0.01,
-#         max_grad_norm=1.0,
-#     )
 
 
 @configclass
 class AdversarialPPORunnerCfg():
     protagonist: Protagonist_PPORunnerCfg = Protagonist_PPORunnerCfg()
-    antagonist: Antagonist_PPORunnerCfg = Antagonist_PPORunnerCfg()
-    # adversary: Adversary_PPORunnerCfg = Adversary_PPORunnerCfg()
+    adversary: Adversary_PPORunnerCfg = Adversary_PPORunnerCfg()
     
     # Which obs keys to use
     protagonist_obs_key: str = "protagonist_policy"
     protagonist_critic_key: str = "protagonist_critic"
-    antagonist_obs_key: str = "antagonist_policy"
-    antagonist_critic_key: str = "antagonist_critic"
-    # adversary_obs_key: str = "adversary_actor"
-    # adversary_critic_key: str = "adversary_critic"
+    adversary_obs_key: str = "adversary_actor"
+    adversary_critic_key: str = "adversary_critic"
