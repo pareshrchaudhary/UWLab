@@ -109,6 +109,10 @@ class RslRlAdversarialRunnerCfg(RslRlBaseRunnerCfg):
     receive the "policy" and "privileged" observations.
 
     For more details, please check ``vec_env.py`` in the rsl_rl library.
+
+    Notes:
+        For actor-only adversary algorithms (e.g. `SimplePPO`), `adversary_obs_groups` may omit the
+        ``"critic"`` key. The runner maps it to the policy observations for compatibility.
     """
 
     protagonist_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore

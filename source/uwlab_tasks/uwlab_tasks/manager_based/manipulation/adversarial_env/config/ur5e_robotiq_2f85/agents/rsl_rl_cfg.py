@@ -72,7 +72,6 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
     # Adversary obs_groups: maps "policy"/"critic" to env observation groups
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
-        "critic": ["adversary_critic"],
     }
 
     # Protagonist policy and algorithm
@@ -106,26 +105,22 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
-        critic_obs_normalization=True,
-        actor_hidden_dims=[512, 256, 128, 64],
-        critic_hidden_dims=[512, 256, 128, 64],
+        actor_hidden_dims=[256, 128, 64],
+        critic_obs_normalization=False,
+        critic_hidden_dims=[1],
         activation="elu",
         noise_std_type="log",
         state_dependent_std=False,
     )
     adversary_algorithm = RslRlPpoAlgorithmCfg(
-        # REINFORCE-like for one-step setting
-        value_loss_coef=0.0,
-        use_clipped_value_loss=False,
+        class_name="SimplePPO",
         normalize_advantage_per_mini_batch=False,
-        clip_param=1000.0,
+        clip_param=0.1,
         entropy_coef=0.006,
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
         schedule="adaptive",
-        gamma=1.0,
-        lam=1.0,
         desired_kl=0.01,
         max_grad_norm=1.0,
     )

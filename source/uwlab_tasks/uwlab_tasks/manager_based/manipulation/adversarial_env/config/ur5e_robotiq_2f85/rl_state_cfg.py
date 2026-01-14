@@ -493,19 +493,7 @@ class AdversaryObservationsCfg:
             self.concatenate_terms = True
             self.history_length = 1
 
-    @configclass
-    class CriticCfg(ObsGroup):
-        """Adversary critic input: standard normal noise."""
-
-        noise = ObsTerm(func=task_mdp.adversary_noise, params={"dim": 8})
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
-            self.history_length = 1
-
     policy: PolicyCfg = PolicyCfg()
-    critic: CriticCfg = CriticCfg()
 
 # CAGE Observations
 @configclass
@@ -517,7 +505,6 @@ class ObservationsCfg:
         - "protagonist_policy": protagonist actor observations
         - "protagonist_critic": protagonist critic observations
         - "adversary_policy": adversary actor observations
-        - "adversary_critic": adversary critic observations
     """
 
     # Protagonist observations
@@ -526,7 +513,6 @@ class ObservationsCfg:
 
     # Adversary observations
     adversary_policy: AdversaryObservationsCfg.PolicyCfg = AdversaryObservationsCfg.PolicyCfg()
-    adversary_critic: AdversaryObservationsCfg.CriticCfg = AdversaryObservationsCfg.CriticCfg()
 
 #########################################################
 # Rewards
