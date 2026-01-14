@@ -168,7 +168,7 @@ class BaseEventCfg:
     )
 
     randomize_robot_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
+        func=task_mdp.randomize_rigid_body_mass, # type: ignore
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot"),
@@ -180,7 +180,7 @@ class BaseEventCfg:
     )
 
     randomize_insertive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
+        func=task_mdp.randomize_rigid_body_mass, # type: ignore
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("insertive_object"),
@@ -193,7 +193,7 @@ class BaseEventCfg:
     )
 
     randomize_receptive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
+        func=task_mdp.randomize_rigid_body_mass, # type: ignore
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("receptive_object"),
@@ -205,7 +205,7 @@ class BaseEventCfg:
     )
 
     randomize_table_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
+        func=task_mdp.randomize_rigid_body_mass, # type: ignore
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("table"),
@@ -217,7 +217,7 @@ class BaseEventCfg:
     )
 
     randomize_robot_joint_parameters = EventTerm(
-        func=task_mdp.randomize_joint_parameters,
+        func=task_mdp.randomize_joint_parameters, # type: ignore
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*", "finger_joint"]),
@@ -229,7 +229,7 @@ class BaseEventCfg:
     )
 
     randomize_gripper_actuator_parameters = EventTerm(
-        func=task_mdp.randomize_actuator_gains,
+        func=task_mdp.randomize_actuator_gains, # type: ignore
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
@@ -241,7 +241,7 @@ class BaseEventCfg:
     )
 
     # mode: reset
-    reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
+    reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={}) # type: ignore
 
 
 @configclass
@@ -303,7 +303,7 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action)
+        prev_actions = ObsTerm(func=task_mdp.last_action) # type: ignore
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos)
 
@@ -355,9 +355,9 @@ class ObservationsCfg:
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action)
+        prev_actions = ObsTerm(func=task_mdp.last_action) # type: ignore
 
-        joint_pos = ObsTerm(func=task_mdp.joint_pos)
+        joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
         end_effector_pose = ObsTerm(
             func=task_mdp.target_asset_pose_in_root_asset_frame_with_metadata,
@@ -399,9 +399,9 @@ class ObservationsCfg:
         )
 
         # privileged observations
-        time_left = ObsTerm(func=task_mdp.time_left)
+        time_left = ObsTerm(func=task_mdp.time_left) # type: ignore
 
-        joint_vel = ObsTerm(func=task_mdp.joint_vel)
+        joint_vel = ObsTerm(func=task_mdp.joint_vel) # type: ignore 
 
         end_effector_vel_lin_ang_b = ObsTerm(
             func=task_mdp.asset_link_velocity_in_root_asset_frame,

@@ -47,7 +47,7 @@ class Base_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 @configclass
-class AdversarialPPORunnerCfg(RslRlAdversarialRunnerCfg):
+class MultiAgentRunner(RslRlAdversarialRunnerCfg):
     """Adversarial runner with Protagonist and Adversary policies.
 
     The obs_groups uses standard "policy"/"critic" keys that rsl_rl expects.
@@ -55,7 +55,7 @@ class AdversarialPPORunnerCfg(RslRlAdversarialRunnerCfg):
     obs_groups (protagonist_obs_groups, adversary_obs_groups).
     """
 
-    class_name: str = "AdversarialOnPolicyRunner"
+    class_name: str = "MultiAgentRunner"
 
     num_steps_per_env = 32
     adversary_update_every_k_steps = 5
@@ -118,7 +118,7 @@ class AdversarialPPORunnerCfg(RslRlAdversarialRunnerCfg):
         value_loss_coef=0.0,
         use_clipped_value_loss=False,
         normalize_advantage_per_mini_batch=False,
-        clip_param=0.0,
+        clip_param=1000.0,
         entropy_coef=0.006,
         num_learning_epochs=1,
         num_mini_batches=1,

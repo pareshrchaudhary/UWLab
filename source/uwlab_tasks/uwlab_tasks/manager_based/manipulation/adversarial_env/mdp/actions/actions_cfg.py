@@ -36,12 +36,14 @@ class TransformedOperationalSpaceControllerActionCfg(OperationalSpaceControllerA
 
 @configclass
 class AdversaryActionCfg(ActionTermCfg):
-    """Action term that stores adversary outputs (used by reset-time parameter application).
+    """Storage-only action term for adversary outputs.
 
-    The processed action is always zero (so it never affects per-step action penalties).
-    Reset events read `raw_actions` directly.
+    - `raw_actions`: read by reset events
+    - `processed_actions`: always zero (no per-step penalties)
     """
 
     class_type: type[ActionTerm] = task_space_actions.AdversaryAction
+
+    asset_name: str = "robot"
 
     action_dim: int = 9

@@ -17,6 +17,7 @@ import carb
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
 import omni.usd
+from isaaclab.actuators import ImplicitActuator
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.controllers import DifferentialIKControllerCfg
 from isaaclab.envs import ManagerBasedEnv
@@ -25,6 +26,7 @@ from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from isaaclab.utils.assets import retrieve_file_path
+from isaaclab.utils.version import get_isaac_sim_version
 from pxr import UsdGeom
 
 from uwlab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
@@ -219,7 +221,7 @@ class grasp_sampling_event(ManagerTermBase):
             self.finger_offset,
             self.finger_offset + mesh_diagonal + self.finger_clearance / 2,
             self.num_standoff_samples,
-        )
+        ) # type: ignore
 
         max_gripper_width = self.gripper_maximum_aperture
 
@@ -1086,7 +1088,7 @@ class MultiResetManager(ManagerTermBase):
             current_env_ids = env_ids[mask]
             state_indices = torch.randint(
                 0, self.num_states[dataset_idx], (len(current_env_ids),), device=self._env.device
-            )
+            ) # type: ignore
             states_to_reset_from = sample_from_nested_dict(self.datasets[dataset_idx], state_indices)
             self._env.scene.reset_to(states_to_reset_from["initial_state"], env_ids=current_env_ids, is_relative=True)
 
@@ -1449,7 +1451,7 @@ def adversary_robot_material_from_action(
 ) -> None:
     """Set robot material params from adversary action (reset-only).
 
-    Expected action layout (dim=7):
+    Expected action layout (dim=9):
         [0] static_friction (absolute)
         [1] dynamic_friction (absolute)
         [2] robot_mass_scale
@@ -1457,29 +1459,32 @@ def adversary_robot_material_from_action(
         [4] robot_joint_armature_scale
         [5] gripper_stiffness_scale
         [6] gripper_damping_scale
+        [7] osc_stiffness_scale (used by a different reset event)
+        [8] osc_damping_scale (used by a different reset event)
     """
 
     raw_actions = _get_action_term_raw_actions(env, action_name)
-    a = raw_actions[env_ids]
+    env_ids_cpu = env_ids.cpu()
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
 
-    # Use existing material randomization utility with degenerate ranges (value,value).
-    from isaaclab.envs.mdp import randomize_rigid_body_material
+    # Get the asset from the scene
+    asset = env.scene[asset_cfg.name]
 
-    # Apply per-env (no range sampling).
-    for i in range(len(env_ids)):
-        env_id = env_ids[i : i + 1]
-        static_friction = float(torch.clamp(a[i, 0], static_friction_range[0], static_friction_range[1]))
-        dynamic_friction = float(torch.clamp(a[i, 1], dynamic_friction_range[0], dynamic_friction_range[1]))
-        randomize_rigid_body_material(
-            env=env,
-            env_ids=env_id,
-            static_friction_range=(static_friction, static_friction),
-            dynamic_friction_range=(dynamic_friction, dynamic_friction),
-            restitution_range=(0.0, 0.0),
-            num_buckets=num_buckets,
-            asset_cfg=asset_cfg,
-            make_consistent=make_consistent,
-        )
+    # Clamp adversary-chosen absolute values (IsaacLab uses CPU tensors for materials).
+    static_friction = torch.clamp(a[:, 0], static_friction_range[0], static_friction_range[1]).to("cpu")
+    dynamic_friction = torch.clamp(a[:, 1], dynamic_friction_range[0], dynamic_friction_range[1]).to("cpu")
+    if make_consistent:
+        dynamic_friction = torch.minimum(dynamic_friction, static_friction)
+
+    # Retrieve material buffer from the physics simulation and update.
+    materials = asset.root_physx_view.get_material_properties()
+    materials[env_ids_cpu, :, 0] = static_friction.view(-1, 1)
+    materials[env_ids_cpu, :, 1] = dynamic_friction.view(-1, 1)
+    materials[env_ids_cpu, :, 2] = 0.0  # restitution
+
+    # Apply to simulation
+    asset.root_physx_view.set_material_properties(materials, env_ids_cpu)
 
 
 def adversary_robot_mass_from_action(
@@ -1490,25 +1495,56 @@ def adversary_robot_mass_from_action(
     mass_scale_range: tuple[float, float],
     recompute_inertia: bool = True,
 ) -> None:
-    """Set robot mass scaling from adversary action (reset-only)."""
+    """Set robot mass scaling from adversary action (reset-only).
+
+    Expected action layout (dim=9):
+        [2] robot_mass_scale
+    """
 
     raw_actions = _get_action_term_raw_actions(env, action_name)
-    a = raw_actions[env_ids]
+    env_ids_cpu = env_ids.cpu()
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
 
-    from isaaclab.envs.mdp import randomize_rigid_body_mass
+    # Get the asset from the scene
+    asset = env.scene[asset_cfg.name]
 
-    for i in range(len(env_ids)):
-        env_id = env_ids[i : i + 1]
-        mass_scale = float(torch.clamp(a[i, 2], mass_scale_range[0], mass_scale_range[1]))
-        randomize_rigid_body_mass(
-            env=env,
-            env_ids=env_id,
-            asset_cfg=asset_cfg,
-            mass_distribution_params=(mass_scale, mass_scale),
-            operation="scale",
-            distribution="uniform",
-            recompute_inertia=recompute_inertia,
-        )
+    # Resolve body indices
+    if asset_cfg.body_ids == slice(None):
+        body_ids = torch.arange(asset.num_bodies, dtype=torch.int, device="cpu")
+    else:
+        body_ids = torch.tensor(asset_cfg.body_ids, dtype=torch.int, device="cpu")
+
+    # Get the current masses of the bodies (num_envs, num_bodies)
+    masses = asset.root_physx_view.get_masses()
+
+    # Reset to defaults, then apply per-env scaling (mirror IsaacLab randomize_rigid_body_mass).
+    masses[env_ids_cpu[:, None], body_ids] = asset.data.default_mass[env_ids_cpu[:, None], body_ids].clone()
+    mass_scale = torch.clamp(a[:, 2], mass_scale_range[0], mass_scale_range[1]).to("cpu")
+    masses[env_ids_cpu[:, None], body_ids] *= mass_scale.view(-1, 1)
+    masses = torch.clamp(masses, min=1e-6)
+
+    # Set the mass into the physics simulation
+    asset.root_physx_view.set_masses(masses, env_ids_cpu)
+
+    # Recompute inertia tensors if needed
+    if recompute_inertia:
+        # Compute the ratios of the new masses to the default masses.
+        ratios = masses[env_ids_cpu[:, None], body_ids] / asset.data.default_mass[env_ids_cpu[:, None], body_ids]
+
+        # Scale the inertia tensors by the ratios (mirror IsaacLab).
+        inertias = asset.root_physx_view.get_inertias()
+        if isinstance(asset, Articulation):
+            inertias[env_ids_cpu[:, None], body_ids] = asset.data.default_inertia[env_ids_cpu[:, None], body_ids] * ratios[
+                ..., None
+            ]
+        else:
+            # For rigid objects, inertia tensor is (num_envs, 9). Expect a single body.
+            if ratios.ndim == 2 and ratios.shape[1] == 1:
+                ratios = ratios[:, 0]
+            inertias[env_ids_cpu] = asset.data.default_inertia[env_ids_cpu] * ratios.view(-1, 1)
+
+        asset.root_physx_view.set_inertias(inertias, env_ids_cpu)
 
 
 def adversary_robot_joint_parameters_from_action(
@@ -1519,26 +1555,75 @@ def adversary_robot_joint_parameters_from_action(
     friction_scale_range: tuple[float, float],
     armature_scale_range: tuple[float, float],
 ) -> None:
-    """Set robot joint friction/armature scaling from adversary action (reset-only)."""
+    """Set robot joint friction/armature scaling from adversary action (reset-only).
+
+    Expected action layout (dim=9):
+        [3] robot_joint_friction_scale
+        [4] robot_joint_armature_scale
+    """
+
+    # Get the asset from the scene
+    asset = env.scene[asset_cfg.name]
+    env_ids = env_ids.to(asset.device)
 
     raw_actions = _get_action_term_raw_actions(env, action_name)
-    a = raw_actions[env_ids]
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
 
-    from isaaclab.envs.mdp import randomize_joint_parameters
+    # Resolve joint indices
+    if asset_cfg.joint_ids == slice(None):
+        joint_ids = slice(None)  # for optimization purposes
+    else:
+        joint_ids = torch.tensor(asset_cfg.joint_ids, dtype=torch.int, device=asset.device)
 
-    for i in range(len(env_ids)):
-        env_id = env_ids[i : i + 1]
-        friction_scale = float(torch.clamp(a[i, 3], friction_scale_range[0], friction_scale_range[1]))
-        armature_scale = float(torch.clamp(a[i, 4], armature_scale_range[0], armature_scale_range[1]))
-        randomize_joint_parameters(
-            env=env,
-            env_ids=env_id,
-            asset_cfg=asset_cfg,
-            friction_distribution_params=(friction_scale, friction_scale),
-            armature_distribution_params=(armature_scale, armature_scale),
-            operation="scale",
-            distribution="uniform",
-        )
+    if env_ids != slice(None) and joint_ids != slice(None):
+        env_ids_for_slice = env_ids[:, None]
+    else:
+        env_ids_for_slice = env_ids
+
+    # Clamp adversary-chosen scale factors.
+    friction_scale = torch.clamp(a[:, 3], friction_scale_range[0], friction_scale_range[1]).to(asset.device)
+    armature_scale = torch.clamp(a[:, 4], armature_scale_range[0], armature_scale_range[1]).to(asset.device)
+
+    # Mirror IsaacLab's randomize_joint_parameters write-paths.
+    # -- joint friction coefficient
+    friction_coeff = asset.data.default_joint_friction_coeff.clone()
+    friction_coeff[env_ids_for_slice, joint_ids] *= friction_scale.view(-1, 1)
+    friction_coeff = torch.clamp(friction_coeff, min=0.0)
+    static_friction_coeff = friction_coeff[env_ids_for_slice, joint_ids]
+
+    if get_isaac_sim_version().major >= 5:
+        dynamic_friction_coeff = asset.data.default_joint_dynamic_friction_coeff.clone()
+        viscous_friction_coeff = asset.data.default_joint_viscous_friction_coeff.clone()
+
+        dynamic_friction_coeff[env_ids_for_slice, joint_ids] *= friction_scale.view(-1, 1)
+        viscous_friction_coeff[env_ids_for_slice, joint_ids] *= friction_scale.view(-1, 1)
+
+        dynamic_friction_coeff = torch.clamp(dynamic_friction_coeff, min=0.0)
+        viscous_friction_coeff = torch.clamp(viscous_friction_coeff, min=0.0)
+
+        # Ensure dynamic ≤ static (same shape before indexing).
+        dynamic_friction_coeff = torch.minimum(dynamic_friction_coeff, friction_coeff)
+
+        dynamic_friction_coeff = dynamic_friction_coeff[env_ids_for_slice, joint_ids]
+        viscous_friction_coeff = viscous_friction_coeff[env_ids_for_slice, joint_ids]
+    else:
+        dynamic_friction_coeff = None
+        viscous_friction_coeff = None
+
+    asset.write_joint_friction_coefficient_to_sim(
+        joint_friction_coeff=static_friction_coeff,
+        joint_dynamic_friction_coeff=dynamic_friction_coeff,
+        joint_viscous_friction_coeff=viscous_friction_coeff,
+        joint_ids=joint_ids,
+        env_ids=env_ids,
+    )
+
+    # -- joint armature
+    armature = asset.data.default_joint_armature.clone()
+    armature[env_ids_for_slice, joint_ids] *= armature_scale.view(-1, 1)
+    armature = torch.clamp(armature, min=0.0)
+    asset.write_joint_armature_to_sim(armature[env_ids_for_slice, joint_ids], joint_ids=joint_ids, env_ids=env_ids)
 
 
 def adversary_gripper_actuator_gains_from_action(
@@ -1549,23 +1634,59 @@ def adversary_gripper_actuator_gains_from_action(
     stiffness_scale_range: tuple[float, float],
     damping_scale_range: tuple[float, float],
 ) -> None:
-    """Set gripper actuator stiffness/damping scaling from adversary action (reset-only)."""
+    """Set gripper actuator stiffness/damping scaling from adversary action (reset-only).
+
+    Expected action layout (dim=9):
+        [5] gripper_stiffness_scale
+        [6] gripper_damping_scale
+    """
+
+    # Get the asset from the scene
+    asset = env.scene[asset_cfg.name]
+    env_ids = env_ids.to(asset.device)
 
     raw_actions = _get_action_term_raw_actions(env, action_name)
-    a = raw_actions[env_ids]
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
 
-    from isaaclab.envs.mdp import randomize_actuator_gains
+    stiffness_scale = torch.clamp(a[:, 5], stiffness_scale_range[0], stiffness_scale_range[1]).to(asset.device)
+    damping_scale = torch.clamp(a[:, 6], damping_scale_range[0], damping_scale_range[1]).to(asset.device)
 
-    for i in range(len(env_ids)):
-        env_id = env_ids[i : i + 1]
-        stiffness_scale = float(torch.clamp(a[i, 5], stiffness_scale_range[0], stiffness_scale_range[1]))
-        damping_scale = float(torch.clamp(a[i, 6], damping_scale_range[0], damping_scale_range[1]))
-        randomize_actuator_gains(
-            env=env,
-            env_ids=env_id,
-            asset_cfg=asset_cfg,
-            stiffness_distribution_params=(stiffness_scale, stiffness_scale),
-            damping_distribution_params=(damping_scale, damping_scale),
-            operation="scale",
-            distribution="uniform",
-        )
+    # Copy IsaacLab's actuator-loop structure from randomize_actuator_gains, but apply adversary scales.
+    for actuator in asset.actuators.values():
+        if isinstance(asset_cfg.joint_ids, slice):
+            # We take all the joints of the actuator.
+            actuator_indices = slice(None)
+            if isinstance(actuator.joint_indices, slice):
+                global_indices = slice(None)
+            elif isinstance(actuator.joint_indices, torch.Tensor):
+                global_indices = actuator.joint_indices.to(asset.device)
+            else:
+                raise TypeError("Actuator joint indices must be a slice or a torch.Tensor.")
+        elif isinstance(actuator.joint_indices, slice):
+            # We take the joints defined in the asset config.
+            global_indices = actuator_indices = torch.tensor(asset_cfg.joint_ids, device=asset.device)
+        else:
+            # Take intersection of actuator joints and asset config joints.
+            actuator_joint_indices = actuator.joint_indices
+            asset_joint_ids = torch.tensor(asset_cfg.joint_ids, device=asset.device)
+            actuator_indices = torch.nonzero(torch.isin(actuator_joint_indices, asset_joint_ids)).view(-1)
+            if len(actuator_indices) == 0:
+                continue
+            global_indices = actuator_joint_indices[actuator_indices]
+
+        # Stiffness: reset to defaults then scale per-env.
+        stiffness = actuator.stiffness[env_ids].clone()
+        stiffness[:, actuator_indices] = asset.data.default_joint_stiffness[env_ids][:, global_indices].clone()
+        stiffness[:, actuator_indices] *= stiffness_scale.view(-1, 1)
+        actuator.stiffness[env_ids] = stiffness
+        if isinstance(actuator, ImplicitActuator):
+            asset.write_joint_stiffness_to_sim(stiffness, joint_ids=actuator.joint_indices, env_ids=env_ids)
+
+        # Damping: reset to defaults then scale per-env.
+        damping = actuator.damping[env_ids].clone()
+        damping[:, actuator_indices] = asset.data.default_joint_damping[env_ids][:, global_indices].clone()
+        damping[:, actuator_indices] *= damping_scale.view(-1, 1)
+        actuator.damping[env_ids] = damping
+        if isinstance(actuator, ImplicitActuator):
+            asset.write_joint_damping_to_sim(damping, joint_ids=actuator.joint_indices, env_ids=env_ids)

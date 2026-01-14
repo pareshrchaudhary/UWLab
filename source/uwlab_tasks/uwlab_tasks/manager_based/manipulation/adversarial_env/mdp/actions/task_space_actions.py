@@ -98,22 +98,17 @@ class TransformedOperationalSpaceControllerAction(OperationalSpaceControllerActi
 
 
 class AdversaryAction(ActionTerm):
-    """Stores adversary action outputs for reset-time parameter application.
-
-    - `raw_actions`: last adversary output vector (used by reset events)
-    - `processed_actions`: always zero (so it never affects per-step control / penalties)
-    """
+    """Storage-only action term for adversary outputs."""
 
     cfg: actions_cfg.AdversaryActionCfg
 
     def __init__(self, cfg: actions_cfg.AdversaryActionCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
         self._raw_actions = torch.zeros(self.num_envs, self.cfg.action_dim, device=self.device)
-        self._processed_actions = torch.zeros_like(self._raw_actions)
 
     @property
     def action_dim(self) -> int:
-        return int(self.cfg.action_dim)
+        return self.cfg.action_dim
 
     @property
     def raw_actions(self) -> torch.Tensor:
@@ -121,11 +116,10 @@ class AdversaryAction(ActionTerm):
 
     @property
     def processed_actions(self) -> torch.Tensor:
-        return self._processed_actions
+        return torch.zeros_like(self._raw_actions)
 
     def process_actions(self, actions: torch.Tensor):
         self._raw_actions[:] = actions.to(self.device)
-        self._processed_actions.zero_()
 
     def apply_actions(self):
         pass

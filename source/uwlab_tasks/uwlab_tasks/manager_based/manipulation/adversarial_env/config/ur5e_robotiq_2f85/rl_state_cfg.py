@@ -20,7 +20,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR
+from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR # type: ignore
 from uwlab_assets.robots.ur5e_robotiq_gripper import (
     EXPLICIT_UR5E_ROBOTIQ_2F85,
     IMPLICIT_UR5E_ROBOTIQ_2F85,
@@ -117,24 +117,25 @@ class BaseEventCfg:
     """Configuration for events."""
 
     #########################################################
-    # Robot
+    # Robot (Adversary-controlled parameters)
     #########################################################
-    # mode: startup (randomize dynamics)
+    # Adversary action indices: [0] static_friction, [1] dynamic_friction
     robot_material = EventTerm(
-        func=task_mdp.adversary_robot_material_from_action,
+        func=task_mdp.adversary_robot_material_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("robot"),
             "static_friction_range": (0.3, 1.2),
             "dynamic_friction_range": (0.2, 1.0),
             "num_buckets": 256,
-            "asset_cfg": SceneEntityCfg("robot"),
             "make_consistent": True,
         },
     )
 
+    # Adversary action index: [2] mass_scale
     randomize_robot_mass = EventTerm(
-        func=task_mdp.adversary_robot_mass_from_action,
+        func=task_mdp.adversary_robot_mass_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -144,8 +145,9 @@ class BaseEventCfg:
         },
     )
 
+    # Adversary action indices: [3] friction_scale, [4] armature_scale
     randomize_robot_joint_parameters = EventTerm(
-        func=task_mdp.adversary_robot_joint_parameters_from_action,
+        func=task_mdp.adversary_robot_joint_parameters_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -155,8 +157,9 @@ class BaseEventCfg:
         },
     )
 
+    # Adversary action indices: [5] stiffness_scale, [6] damping_scale
     randomize_gripper_actuator_parameters = EventTerm(
-        func=task_mdp.adversary_gripper_actuator_gains_from_action,
+        func=task_mdp.adversary_gripper_actuator_gains_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -172,7 +175,7 @@ class BaseEventCfg:
     # use large friction to avoid slipping
     insertive_object_material = EventTerm(
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
-        mode="startup",
+        mode="reset",
         params={
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
@@ -184,8 +187,8 @@ class BaseEventCfg:
     )
 
     randomize_insertive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
-        mode="startup",
+        func=task_mdp.randomize_rigid_body_mass, # type: ignore
+        mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("insertive_object"),
             # we assume insertive object is somewhere between 20g and 200g
@@ -202,7 +205,7 @@ class BaseEventCfg:
     # use large friction to avoid slipping
     receptive_object_material = EventTerm(
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
-        mode="startup",
+        mode="reset",
         params={
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
@@ -214,8 +217,8 @@ class BaseEventCfg:
     )
 
     randomize_receptive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
-        mode="startup",
+        func=task_mdp.randomize_rigid_body_mass, # type: ignore
+        mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("receptive_object"),
             "mass_distribution_params": (0.5, 1.5),
@@ -229,7 +232,7 @@ class BaseEventCfg:
     # Table
     #########################################################
     randomize_table_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
+        func=task_mdp.randomize_rigid_body_mass, # type: ignore
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("table"),
@@ -254,7 +257,7 @@ class BaseEventCfg:
     )
 
     # mode: reset
-    reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
+    reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={}) # type: ignore
 
 #########################################################
 # Training Events
@@ -325,9 +328,9 @@ class ProtagonistObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action)
+        prev_actions = ObsTerm(func=task_mdp.last_action) # type: ignore
 
-        joint_pos = ObsTerm(func=task_mdp.joint_pos)
+        joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
         end_effector_pose = ObsTerm(
             func=task_mdp.target_asset_pose_in_root_asset_frame_with_metadata,
@@ -377,9 +380,9 @@ class ProtagonistObservationsCfg:
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action)
+        prev_actions = ObsTerm(func=task_mdp.last_action) # type: ignore
 
-        joint_pos = ObsTerm(func=task_mdp.joint_pos)
+        joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
         end_effector_pose = ObsTerm(
             func=task_mdp.target_asset_pose_in_root_asset_frame_with_metadata,
@@ -423,7 +426,7 @@ class ProtagonistObservationsCfg:
         # privileged observations
         time_left = ObsTerm(func=task_mdp.time_left)
 
-        joint_vel = ObsTerm(func=task_mdp.joint_vel)
+        joint_vel = ObsTerm(func=task_mdp.joint_vel) # type: ignore
 
         end_effector_vel_lin_ang_b = ObsTerm(
             func=task_mdp.asset_link_velocity_in_root_asset_frame,
@@ -543,7 +546,7 @@ class RewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"])},
     )
 
-    abnormal_robot = RewTerm(func=task_mdp.abnormal_robot_state, weight=-100.0)
+    abnormal_robot = RewTerm(func=task_mdp.abnormal_robot_state, weight=-100.0) # type: ignore
 
     # task rewards
 
@@ -579,9 +582,9 @@ class RewardsCfg:
 class TerminationsCfg:
     """Termination terms for the MDP."""
 
-    time_out = DoneTerm(func=task_mdp.time_out, time_out=True)
+    time_out = DoneTerm(func=task_mdp.time_out, time_out=True) # type: ignore       
 
-    abnormal_robot = DoneTerm(func=task_mdp.abnormal_robot_state)
+    abnormal_robot = DoneTerm(func=task_mdp.abnormal_robot_state) # type: ignore
 
 #########################################################
 # Make Insertive and Receptive Objects
@@ -654,11 +657,11 @@ variants = {
 @configclass
 class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
     scene: RlStateSceneCfg = RlStateSceneCfg(num_envs=32, env_spacing=1.5)
-    observations: MISSING
+    observations: MISSING # type: ignore
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
-    events: BaseEventCfg = MISSING
+    events: BaseEventCfg = MISSING # type: ignore
     commands: CommandsCfg = CommandsCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(2.0, 0.0, 0.75), origin_type="world", env_index=0, asset_name="robot")
     variants = variants
@@ -706,7 +709,8 @@ class Ur5eRobotiq2f85ProtagonistTrainCfg(Ur5eRobotiq2f85RlStateCfg):
         super().__post_init__()
         self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        self.events.randomize_robot_actuator_parameters = EventTerm(
+        # Adversary action indices: [7] osc_stiffness_scale, [8] osc_damping_scale
+        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore
             func=task_mdp.adversary_operational_space_controller_gains_from_action,
             mode="reset",
             params={
@@ -714,6 +718,8 @@ class Ur5eRobotiq2f85ProtagonistTrainCfg(Ur5eRobotiq2f85RlStateCfg):
                 "osc_action_name": "arm",
                 "stiffness_scale_range": (0.7, 1.3),
                 "damping_scale_range": (0.9, 1.1),
+                "action_stiffness_index": 7,
+                "action_damping_index": 8,
             },
         )
         
@@ -730,7 +736,8 @@ class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
         super().__post_init__()
         self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        self.events.randomize_robot_actuator_parameters = EventTerm(
+        # Adversary action indices: [7] osc_stiffness_scale, [8] osc_damping_scale
+        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore
             func=task_mdp.adversary_operational_space_controller_gains_from_action,
             mode="reset",
             params={
@@ -738,6 +745,8 @@ class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
                 "osc_action_name": "arm",
                 "stiffness_scale_range": (0.7, 1.3),
                 "damping_scale_range": (0.9, 1.1),
+                "action_stiffness_index": 7,
+                "action_damping_index": 8,
             },
         )
 
@@ -752,8 +761,8 @@ class Ur5eRobotiq2f85RelJointPosTrainCfg(Ur5eRobotiq2f85RlStateCfg):
         super().__post_init__()
         self.scene.robot = IMPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        self.events.randomize_robot_actuator_parameters = EventTerm(
-            func=task_mdp.randomize_actuator_gains,
+        self.events.randomize_robot_actuator_parameters = EventTerm( # type: ignore
+            func=task_mdp.randomize_actuator_gains, # type: ignore
             mode="reset",
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*", "finger_joint"]),
@@ -778,15 +787,17 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfg(Ur5eRobotiq2f85RlStateCfg):
         super().__post_init__()
         self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        self.events.randomize_robot_actuator_parameters = EventTerm(
-            func=task_mdp.randomize_operational_space_controller_gains,
+        # Adversary action indices: [7] osc_stiffness_scale, [8] osc_damping_scale
+        self.events.randomize_robot_actuator_parameters = EventTerm( # type: ignore
+            func=task_mdp.adversary_operational_space_controller_gains_from_action,
             mode="reset",
             params={
-                "action_name": "arm",
-                "stiffness_distribution_params": (0.7, 1.3),
-                "damping_distribution_params": (0.9, 1.1),
-                "operation": "scale",
-                "distribution": "uniform",
+                "adversary_action_name": "adversaryaction",
+                "osc_action_name": "arm",
+                "stiffness_scale_range": (0.7, 1.3),
+                "damping_scale_range": (0.9, 1.1),
+                "action_stiffness_index": 7,
+                "action_damping_index": 8,
             },
         )
 
@@ -801,8 +812,8 @@ class Ur5eRobotiq2f85RelJointPosEvalCfg(Ur5eRobotiq2f85RlStateCfg):
         super().__post_init__()
         self.scene.robot = IMPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        self.events.randomize_robot_actuator_parameters = EventTerm(
-            func=task_mdp.randomize_actuator_gains,
+        self.events.randomize_robot_actuator_parameters = EventTerm( # type: ignore
+            func=task_mdp.randomize_actuator_gains, # type: ignore
             mode="reset",
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*", "finger_joint"]),
