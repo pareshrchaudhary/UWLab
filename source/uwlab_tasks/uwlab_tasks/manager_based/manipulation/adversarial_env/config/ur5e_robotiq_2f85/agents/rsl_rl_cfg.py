@@ -58,7 +58,7 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
     class_name: str = "MultiAgentRunner"
 
     num_steps_per_env = 32
-    adversary_update_every_k_steps = 5
+    adversary_update_every_k_steps = 25
     max_iterations = 40000
     save_interval = 100
     experiment_name = "ur5e_robotiq_2f85_adversarial"
@@ -105,7 +105,7 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
-        actor_hidden_dims=[256, 128, 64],
+        actor_hidden_dims=[128, 64, 32],
         critic_obs_normalization=False,
         critic_hidden_dims=[1],
         activation="elu",
@@ -120,7 +120,7 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
-        schedule="adaptive",
+        schedule="fixed",
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
