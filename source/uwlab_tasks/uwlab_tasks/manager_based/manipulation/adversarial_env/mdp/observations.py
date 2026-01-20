@@ -14,6 +14,24 @@ from uwlab_tasks.manager_based.manipulation.reset_states.assembly_keypoints impo
 from uwlab_tasks.manager_based.manipulation.reset_states.mdp import utils
 
 
+def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = 9) -> torch.Tensor:
+    """  
+    For MARL environments where actions are [policy_actions | adversary_actions],
+    this returns only the policy portion to ensure observation compatibility with
+    single-agent environments.
+    
+    Args:
+        env: The environment instance.
+        adversary_action_dim: Number of adversary action dimensions to exclude from the end.
+    
+    Returns:
+        The last policy actions (shape: num_envs, policy_action_dim).
+    """
+    full_actions = env.action_manager.action
+
+    policy_action_dim = full_actions.shape[-1] - adversary_action_dim
+    return full_actions[:, :policy_action_dim]
+
 def target_asset_pose_in_root_asset_frame(
     env: ManagerBasedEnv,
     target_asset_cfg: SceneEntityCfg,

@@ -48,25 +48,25 @@ class Base_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 @configclass
 class MultiAgentRunner(RslRlAdversarialRunnerCfg):
-    """Adversarial runner with Protagonist and Adversary policies.
+    """Adversarial runner with policy and Adversary policies.
 
     The obs_groups uses standard "policy"/"critic" keys that rsl_rl expects.
     The custom runner will remap these for each agent using the agent-specific
-    obs_groups (protagonist_obs_groups, adversary_obs_groups).
+    obs_groups (obs_groups, adversary_obs_groups).
     """
 
     class_name: str = "MultiAgentRunner"
 
     num_steps_per_env = 32
-    adversary_update_every_k_steps = 25
+    adversary_update_every_k_steps = 30
     max_iterations = 40000
     save_interval = 100
     experiment_name = "ur5e_robotiq_2f85_adversarial"
 
-    # Protagonist obs_groups: maps "policy"/"critic" to env observation groups
-    protagonist_obs_groups = {
-        "policy": ["protagonist_policy"],
-        "critic": ["protagonist_critic"],
+    # obs_groups: maps "policy"/"critic" to env observation groups
+    obs_groups = {
+        "policy": ["policy"],
+        "critic": ["critic"],
     }
 
     # Adversary obs_groups: maps "policy"/"critic" to env observation groups
@@ -74,8 +74,9 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
         "policy": ["adversary_policy"],
     }
 
-    # Protagonist policy and algorithm
-    protagonist_policy = RslRlFancyActorCriticCfg(
+    # policy and algorithm
+    # Note: DO NOT TOUCH
+    policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
         critic_obs_normalization=True,
@@ -85,7 +86,8 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
         noise_std_type="gsde",
         state_dependent_std=False,
     )
-    protagonist_algorithm = RslRlPpoAlgorithmCfg(
+    # Note: DO NOT TOUCH
+    algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         normalize_advantage_per_mini_batch=False,
@@ -101,7 +103,7 @@ class MultiAgentRunner(RslRlAdversarialRunnerCfg):
         max_grad_norm=1.0,
     )
 
-    # Antagonist policy and algorithm (one-step bandit-style)
+    # Adversary policy and algorithm (one-step bandit-style)
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,

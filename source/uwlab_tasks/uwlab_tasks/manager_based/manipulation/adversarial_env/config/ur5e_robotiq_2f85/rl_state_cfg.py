@@ -175,7 +175,7 @@ class BaseEventCfg:
     # use large friction to avoid slipping
     insertive_object_material = EventTerm(
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
-        mode="reset",
+        mode="startup",
         params={
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
@@ -188,7 +188,7 @@ class BaseEventCfg:
 
     randomize_insertive_object_mass = EventTerm(
         func=task_mdp.randomize_rigid_body_mass, # type: ignore
-        mode="reset",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("insertive_object"),
             # we assume insertive object is somewhere between 20g and 200g
@@ -205,7 +205,7 @@ class BaseEventCfg:
     # use large friction to avoid slipping
     receptive_object_material = EventTerm(
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
-        mode="reset",
+        mode="startup",
         params={
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
@@ -218,7 +218,7 @@ class BaseEventCfg:
 
     randomize_receptive_object_mass = EventTerm(
         func=task_mdp.randomize_rigid_body_mass, # type: ignore
-        mode="reset",
+        mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("receptive_object"),
             "mass_distribution_params": (0.5, 1.5),
@@ -319,16 +319,15 @@ class CommandsCfg:
 #########################################################
 # Observations 
 #########################################################
-# Observations Protagonist
 @configclass
-class ProtagonistObservationsCfg:
+class ObservationsCfg:
     """Observation specifications for the MDP."""
 
     @configclass
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action) # type: ignore
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 9})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -380,7 +379,7 @@ class ProtagonistObservationsCfg:
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action) # type: ignore
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 9})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -424,9 +423,9 @@ class ProtagonistObservationsCfg:
         )
 
         # privileged observations
-        time_left = ObsTerm(func=task_mdp.time_left)
+        time_left = ObsTerm(func=task_mdp.time_left) # type: ignore
 
-        joint_vel = ObsTerm(func=task_mdp.joint_vel) # type: ignore
+        joint_vel = ObsTerm(func=task_mdp.joint_vel) # type: ignore 
 
         end_effector_vel_lin_ang_b = ObsTerm(
             func=task_mdp.asset_link_velocity_in_root_asset_frame,
@@ -436,11 +435,33 @@ class ProtagonistObservationsCfg:
             },
         )
 
-        robot_mass = ObsTerm(func=task_mdp.get_mass, params={"asset_cfg": SceneEntityCfg("robot")})
-        
         robot_material_properties = ObsTerm(
             func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("robot")}
         )
+
+        insertive_object_material_properties = ObsTerm(
+            func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("insertive_object")}
+        )
+
+        receptive_object_material_properties = ObsTerm(
+            func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("receptive_object")}
+        )
+
+        table_material_properties = ObsTerm(
+            func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("table")}
+        )
+
+        robot_mass = ObsTerm(func=task_mdp.get_mass, params={"asset_cfg": SceneEntityCfg("robot")})
+
+        insertive_object_mass = ObsTerm(
+            func=task_mdp.get_mass, params={"asset_cfg": SceneEntityCfg("insertive_object")}
+        )
+
+        receptive_object_mass = ObsTerm(
+            func=task_mdp.get_mass, params={"asset_cfg": SceneEntityCfg("receptive_object")}
+        )
+
+        table_mass = ObsTerm(func=task_mdp.get_mass, params={"asset_cfg": SceneEntityCfg("table")})
 
         robot_joint_friction = ObsTerm(func=task_mdp.get_joint_friction, params={"asset_cfg": SceneEntityCfg("robot")})
 
@@ -452,28 +473,11 @@ class ProtagonistObservationsCfg:
 
         robot_joint_damping = ObsTerm(func=task_mdp.get_joint_damping, params={"asset_cfg": SceneEntityCfg("robot")})
 
-        insertive_object_material_properties = ObsTerm(
-            func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("insertive_object")}
-        )
-
-        receptive_object_material_properties = ObsTerm(
-            func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("receptive_object")}
-        )
-
-        insertive_object_mass = ObsTerm(
-            func=task_mdp.get_mass, params={"asset_cfg": SceneEntityCfg("insertive_object")}
-        )
-
-        table_material_properties = ObsTerm(
-            func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("table")}
-        )
-
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
             self.history_length = 1
 
-    # observation groups
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
 
@@ -497,19 +501,19 @@ class AdversaryObservationsCfg:
 
 # CAGE Observations
 @configclass
-class ObservationsCfg:
+class MARLObservationsCfg:
     """Combined observation groups for training on shared environment.
     
     ObservationManager requires ObsGroup instances as direct attributes.
     Keys in obs_buf:
-        - "protagonist_policy": protagonist actor observations
-        - "protagonist_critic": protagonist critic observations
+        - "policy": policy actor observations
+        - "critic": policy critic observations
         - "adversary_policy": adversary actor observations
     """
 
-    # Protagonist observations
-    protagonist_policy: ProtagonistObservationsCfg.PolicyCfg = ProtagonistObservationsCfg.PolicyCfg()
-    protagonist_critic: ProtagonistObservationsCfg.CriticCfg = ProtagonistObservationsCfg.CriticCfg()
+    # Policy observations
+    policy: ObservationsCfg.PolicyCfg = ObservationsCfg.PolicyCfg()
+    critic: ObservationsCfg.CriticCfg = ObservationsCfg.CriticCfg()
 
     # Adversary observations
     adversary_policy: AdversaryObservationsCfg.PolicyCfg = AdversaryObservationsCfg.PolicyCfg()
@@ -681,13 +685,11 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
 #########################################################
 # Training Configuration 
 #########################################################
-
-# Protagonist Training Configuration
 @configclass
-class Ur5eRobotiq2f85ProtagonistTrainCfg(Ur5eRobotiq2f85RlStateCfg):
+class Ur5eRobotiq2f85PolicyTrainCfg(Ur5eRobotiq2f85RlStateCfg):
     """Protagonist training - uses policy/critic keys for standard RSL-RL."""
 
-    observations: ProtagonistObservationsCfg = ProtagonistObservationsCfg()
+    observations: ObservationsCfg = ObservationsCfg()
     events: TrainEventCfg = TrainEventCfg()
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
 
@@ -714,7 +716,7 @@ class Ur5eRobotiq2f85ProtagonistTrainCfg(Ur5eRobotiq2f85RlStateCfg):
 class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
     """Training configuration for Relative Cartesian OSC action space."""
 
-    observations: ObservationsCfg = ObservationsCfg()
+    observations: MARLObservationsCfg = MARLObservationsCfg()
     events: TrainEventCfg = TrainEventCfg()
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
 

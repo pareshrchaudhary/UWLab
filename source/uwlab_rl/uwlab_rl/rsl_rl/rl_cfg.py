@@ -86,7 +86,7 @@ class RslRlAdversarialRunnerCfg(RslRlBaseRunnerCfg):
     adversary_update_every_k_steps: int = MISSING  # type: ignore
     """The number of steps per environment per update for the adversary."""
 
-    protagonist_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    obs_groups: dict[str, list[str]] = MISSING  # type: ignore
     """A mapping from observation groups to observation sets for the protagonist."""
     adversary_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
     """A mapping from observation groups to observation sets for the adversary."""
@@ -115,9 +115,9 @@ class RslRlAdversarialRunnerCfg(RslRlBaseRunnerCfg):
         ``"critic"`` key. The runner maps it to the policy observations for compatibility.
     """
 
-    protagonist_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
+    policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
     """The policy configuration for the protagonist."""
-    protagonist_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
+    algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the protagonist."""
 
     adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
