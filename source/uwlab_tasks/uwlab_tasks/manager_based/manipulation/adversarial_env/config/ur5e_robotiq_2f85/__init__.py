@@ -70,38 +70,6 @@ gym.register(
 #########################################################
 # RL State Environments
 #########################################################
-# Protagonist
-gym.register(
-    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCProtagonist-State-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85ProtagonistTrainCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCProtagonist-State-Play-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
-    },
-)
-
-# Adversarial
-gym.register(
-    id="Cage-Ur5eRobotiq2f85-RelCartesianOSCAdversary-State-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCTrainCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
-    },
-)
-
 # Cage Environment
 gym.register(
     id="Cage-Ur5eRobotiq2f85-RelCartesianOSC-State-v0",
@@ -110,5 +78,25 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCTrainCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:MultiAgentRunner",
+    },
+)
+
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-RelCartesianOSC-State-ID-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:CageInDistributionEvalCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-RelCartesianOSC-State-OOD-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:CageOutOfDistributionEvalCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
     },
 )

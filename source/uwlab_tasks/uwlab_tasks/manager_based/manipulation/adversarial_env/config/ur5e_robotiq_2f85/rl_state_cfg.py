@@ -126,8 +126,8 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot"),
-            "static_friction_range": (0.3, 1.2),
-            "dynamic_friction_range": (0.2, 1.0),
+            "static_friction_range": (0.1, 2.0),
+            "dynamic_friction_range": (0.1, 2.0),
             "num_buckets": 256,
             "make_consistent": True,
         },
@@ -140,7 +140,7 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot"),
-            "mass_scale_range": (0.7, 1.3),
+            "mass_scale_range": (0.1, 2.0),
             "recompute_inertia": True,
         },
     )
@@ -152,8 +152,8 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*", "finger_joint"]),
-            "friction_scale_range": (0.25, 4.0),
-            "armature_scale_range": (0.25, 4.0),
+            "friction_scale_range": (0.1, 4.0),
+            "armature_scale_range": (0.1, 4.0),
         },
     )
 
@@ -164,8 +164,8 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
-            "stiffness_scale_range": (0.5, 2.0),
-            "damping_scale_range": (0.5, 2.0),
+            "stiffness_scale_range": (0.1, 2.0),
+            "damping_scale_range": (0.1, 2.0),
         },
     )
 
@@ -647,7 +647,7 @@ variants = {
 @configclass
 class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
     scene: RlStateSceneCfg = RlStateSceneCfg(num_envs=32, env_spacing=1.5)
-    observations: MISSING # type: ignore
+    observations: MARLObservationsCfg = MARLObservationsCfg()
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
@@ -685,38 +685,11 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
 #########################################################
 # Training Configuration 
 #########################################################
-@configclass
-class Ur5eRobotiq2f85PolicyTrainCfg(Ur5eRobotiq2f85RlStateCfg):
-    """Protagonist training - uses policy/critic keys for standard RSL-RL."""
-
-    observations: ObservationsCfg = ObservationsCfg()
-    events: TrainEventCfg = TrainEventCfg()
-    actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-        # Adversary action indices: [7] osc_stiffness_scale, [8] osc_damping_scale
-        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore
-            func=task_mdp.adversary_operational_space_controller_gains_from_action,
-            mode="reset",
-            params={
-                "adversary_action_name": "adversaryaction",
-                "osc_action_name": "arm",
-                "stiffness_scale_range": (0.7, 1.3),
-                "damping_scale_range": (0.9, 1.1),
-                "action_stiffness_index": 7,
-                "action_damping_index": 8,
-            },
-        )
-        
 # CAGE Training Configuration
 @configclass
 class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
     """Training configuration for Relative Cartesian OSC action space."""
 
-    observations: MARLObservationsCfg = MARLObservationsCfg()
     events: TrainEventCfg = TrainEventCfg()
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
 
@@ -765,27 +738,50 @@ class Ur5eRobotiq2f85RelJointPosTrainCfg(Ur5eRobotiq2f85RlStateCfg):
 # Evaluation Configuration 
 #########################################################
 @configclass
-class Ur5eRobotiq2f85RelCartesianOSCEvalCfg(Ur5eRobotiq2f85RlStateCfg):
-    """Evaluation configuration for Relative Cartesian OSC action space."""
+class CageInDistributionEvalCfg(Ur5eRobotiq2f85RlStateCfg):
+    """Evaluation configuration for Cage In Distribution action space."""
 
     events: EvalEventCfg = EvalEventCfg()
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
 
     def __post_init__(self):
         super().__post_init__()
+        self.eval_interval = 100
         self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        # Adversary action indices: [7] osc_stiffness_scale, [8] osc_damping_scale
-        self.events.randomize_robot_actuator_parameters = EventTerm( # type: ignore
-            func=task_mdp.adversary_operational_space_controller_gains_from_action,
+        self.events.randomize_robot_actuator_parameters = EventTerm(
+            func=task_mdp.randomize_operational_space_controller_gains,
             mode="reset",
             params={
-                "adversary_action_name": "adversaryaction",
-                "osc_action_name": "arm",
-                "stiffness_scale_range": (0.7, 1.3),
-                "damping_scale_range": (0.9, 1.1),
-                "action_stiffness_index": 7,
-                "action_damping_index": 8,
+                "action_name": "arm",
+                "stiffness_distribution_params": (0.7, 1.3),
+                "damping_distribution_params": (0.9, 1.1),
+                "operation": "scale",
+                "distribution": "uniform",
+            },
+        )
+
+@configclass
+class CageOutOfDistributionEvalCfg(Ur5eRobotiq2f85RlStateCfg):
+    """Training configuration for Cage out of Distribution action space."""
+
+    events: EvalEventCfg = EvalEventCfg()
+    actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.eval_interval = 100
+        self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+        self.events.randomize_robot_actuator_parameters = EventTerm(
+            func=task_mdp.randomize_operational_space_controller_gains,
+            mode="reset",
+            params={
+                "action_name": "arm",
+                "stiffness_distribution_params": (1.6, 2.4),
+                "damping_distribution_params": (1.4, 1.6),
+                "operation": "scale",
+                "distribution": "uniform",
             },
         )
 
