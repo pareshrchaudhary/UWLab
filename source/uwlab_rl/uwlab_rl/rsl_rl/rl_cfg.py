@@ -75,9 +75,41 @@ class RslRlFancyPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
     offline_algorithm_cfg: OffPolicyAlgorithmCfg | None = None
     """The configuration for the offline algorithms."""
 
+
+@configclass
+class RslRlAsymmetricActorCriticCfg(RslRlFancyActorCriticCfg):
+    """Configuration for the asymmetric actor-critic networks with recurrent actor."""
+
+    class_name: str = "AsymmetricActorCritic"
+    """The policy class name. Default is AsymmetricActorCritic."""
+
+    rnn_type: str = MISSING
+    """The type of RNN to use. Either "lstm" or "gru"."""
+
+    rnn_hidden_dim: int = MISSING
+    """The dimension of the RNN layers."""
+
+    rnn_num_layers: int = MISSING
+    """The number of RNN layers."""
+
+
 #########################
 # Runner configurations #
 #########################
+
+@configclass
+class RslRlOnPolicyRecurrentRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the runner for on-policy algorithms with recurrent policies."""
+
+    class_name: str = "OnPolicyRunner"
+    """The runner class name. Default is OnPolicyRunner."""
+
+    policy: RslRlAsymmetricActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration."""
+
+    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    """The algorithm configuration."""
+
 
 @configclass
 class RslRlAdversarialRunnerCfg(RslRlBaseRunnerCfg):

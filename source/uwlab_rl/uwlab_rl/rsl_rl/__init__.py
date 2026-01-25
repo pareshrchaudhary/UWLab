@@ -8,5 +8,7 @@ from .rl_cfg import (
     OffPolicyAlgorithmCfg,
     RslRlFancyActorCriticCfg,
     RslRlFancyPpoAlgorithmCfg,
+    RslRlAsymmetricActorCriticCfg,
+    RslRlOnPolicyRecurrentRunnerCfg,
     RslRlAdversarialRunnerCfg,
 )
