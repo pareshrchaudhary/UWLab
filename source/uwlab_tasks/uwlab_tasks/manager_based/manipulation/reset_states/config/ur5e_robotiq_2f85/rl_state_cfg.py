@@ -464,13 +464,13 @@ class RewardsCfg:
 
     # safety rewards
 
-    action_magnitude = RewTerm(func=task_mdp.action_l2_clamped, weight=-1e-4)
+    action_magnitude = RewTerm(func=task_mdp.action_l2_clamped, weight=-1e-5)
 
-    action_rate = RewTerm(func=task_mdp.action_rate_l2_clamped, weight=-1e-4)
+    action_rate = RewTerm(func=task_mdp.action_rate_l2_clamped, weight=-1e-5)
 
     joint_vel = RewTerm(
         func=task_mdp.joint_vel_l2_clamped,
-        weight=-1e-3,
+        weight=-1e-4,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"])},
     )
 

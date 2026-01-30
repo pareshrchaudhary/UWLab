@@ -65,14 +65,14 @@ class Base_PPORecurrentRunnerCfg(RslRlOnPolicyRecurrentRunnerCfg):
         state_dependent_std=False,
         rnn_type="lstm",
         rnn_hidden_dim=256,
-        rnn_num_layers=2,
+        rnn_num_layers=1,
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         normalize_advantage_per_mini_batch=False,
         clip_param=0.2,
-        entropy_coef=0.006,
+        entropy_coef=0.001,
         num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=1.0e-4,
