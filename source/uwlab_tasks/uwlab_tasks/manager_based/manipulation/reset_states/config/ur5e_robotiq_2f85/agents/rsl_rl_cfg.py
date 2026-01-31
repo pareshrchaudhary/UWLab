@@ -6,7 +6,7 @@
 from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
-from uwlab_rl.rsl_rl import RslRlFancyActorCriticCfg, RslRlAsymmetricActorCriticCfg, RslRlOnPolicyRecurrentRunnerCfg
+from uwlab_rl.rsl_rl import RslRlFancyActorCriticCfg, RslRlAsymmetricActorCriticCfg, RslRlOnPolicyRecurrentRunnerCfg, RslRlOnPolicyFullRecurrentRunnerCfg, RslRLFancyActorCriticRecurrentCfg  # noqa: F401  
 
 
 def my_experts_observation_func(env):
@@ -53,7 +53,7 @@ class Base_PPORecurrentRunnerCfg(RslRlOnPolicyRecurrentRunnerCfg):
     max_iterations = 40000
     save_interval = 100
     resume = False
-    experiment_name = "ur5e_robotiq_2f85_reset_states_agent"
+    experiment_name = "ur5e_robotiq_2f85_reset_states_recurrent_agent"
     policy = RslRlAsymmetricActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -61,6 +61,43 @@ class Base_PPORecurrentRunnerCfg(RslRlOnPolicyRecurrentRunnerCfg):
         actor_hidden_dims=[256, 128, 64],
         critic_hidden_dims=[512, 256, 128, 64],
         activation="elu",
+        noise_std_type="gsde",
+        state_dependent_std=False,
+        rnn_type="lstm",
+        rnn_hidden_dim=256,
+        rnn_num_layers=1,
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        normalize_advantage_per_mini_batch=False,
+        clip_param=0.2,
+        entropy_coef=0.001,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+
+@configclass
+class Base_PPOFullRecurrentRunnerCfg(RslRlOnPolicyFullRecurrentRunnerCfg):
+    num_steps_per_env = 32
+    max_iterations = 40000
+    save_interval = 100
+    resume = False
+    experiment_name = "ur5e_robotiq_2f85_reset_states_full_recurrent_agent"
+    policy = RslRLFancyActorCriticRecurrentCfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
+        actor_hidden_dims=[256, 256],
+        critic_hidden_dims=[256, 256],
+        activation="elu",        
         noise_std_type="gsde",
         state_dependent_std=False,
         rnn_type="lstm",

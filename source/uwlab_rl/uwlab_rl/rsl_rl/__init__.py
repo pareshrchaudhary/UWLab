@@ -12,4 +12,6 @@ from .rl_cfg import (
     RslRlMARLRecurrentRunnerCfg,
     RslRlMARLRunnerCfg,
     RslRlOnPolicyRecurrentRunnerCfg,
+    RslRlOnPolicyFullRecurrentRunnerCfg,
+    RslRLFancyActorCriticRecurrentCfg,
 )

@@ -7,7 +7,7 @@ from dataclasses import MISSING
 from typing import Literal
 
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl import RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlBaseRunnerCfg  # noqa: F401
+from isaaclab_rl.rsl_rl import RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlBaseRunnerCfg, RslRlPpoActorCriticRecurrentCfg  # noqa: F401
 
 
 @configclass
@@ -92,6 +92,21 @@ class RslRlAsymmetricActorCriticCfg(RslRlFancyActorCriticCfg):
     rnn_num_layers: int = MISSING
     """The number of RNN layers."""
 
+@configclass
+class RslRLFancyActorCriticRecurrentCfg(RslRlFancyActorCriticCfg):
+    """Configuration for the recurrent actor-critic networks."""
+
+    class_name: str = "ActorCriticRecurrent"
+    """The policy class name. Default is ActorCriticRecurrent."""
+
+    rnn_type: str = MISSING
+    """The type of RNN to use. Either "lstm" or "gru"."""
+
+    rnn_hidden_dim: int = MISSING
+    """The dimension of the RNN layers."""
+
+    rnn_num_layers: int = MISSING
+    """The number of RNN layers."""
 
 #########################
 # Runner configurations #
@@ -110,6 +125,18 @@ class RslRlOnPolicyRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     algorithm: RslRlPpoAlgorithmCfg = MISSING
     """The algorithm configuration."""
 
+@configclass
+class RslRlOnPolicyFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the runner for on-policy algorithms with full recurrent policies."""
+
+    class_name: str = "OnPolicyRunner"
+    """The runner class name. Default is OnPolicyRunner."""
+
+    policy: RslRLFancyActorCriticRecurrentCfg = MISSING  # type: ignore
+    """The policy configuration."""
+
+    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    """The algorithm configuration."""
 
 @configclass
 class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):

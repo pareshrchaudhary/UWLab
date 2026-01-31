@@ -349,7 +349,7 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
-            self.history_length = 5
+            self.history_length = 1
 
     @configclass
     class CriticCfg(ObsGroup):
@@ -464,13 +464,13 @@ class RewardsCfg:
 
     # safety rewards
 
-    action_magnitude = RewTerm(func=task_mdp.action_l2_clamped, weight=-1e-5)
+    action_magnitude = RewTerm(func=task_mdp.action_l2_clamped, weight=-1e-4)
 
-    action_rate = RewTerm(func=task_mdp.action_rate_l2_clamped, weight=-1e-5)
+    action_rate = RewTerm(func=task_mdp.action_rate_l2_clamped, weight=-1e-4)
 
     joint_vel = RewTerm(
         func=task_mdp.joint_vel_l2_clamped,
-        weight=-1e-4,
+        weight=-1e-3,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"])},
     )
 
@@ -685,6 +685,126 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfg(Ur5eRobotiq2f85RlStateCfg):
                 "distribution": "uniform",
             },
         )
+
+
+@configclass
+class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV0(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
+    """Eval variant 0: low stiffness, ObjectAnywhereEEAnywhere."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
+            func=task_mdp.randomize_operational_space_controller_gains,
+            mode="reset",
+            params={
+                "action_name": "arm",
+                "stiffness_distribution_params": (0.7, 0.7),
+                "damping_distribution_params": (0.9, 0.9),
+                "operation": "scale",
+                "distribution": "uniform",
+            },
+        )
+        self.events.reset_from_reset_states = EventTerm(
+            func=task_mdp.MultiResetManager,
+            mode="reset",
+            params={
+                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEAnywhere"],
+                "probs": [1.0],
+                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+            },
+        )
+
+
+@configclass
+class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
+    """Eval variant 1: mid-low stiffness, ObjectRestingEEGrasped."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
+            func=task_mdp.randomize_operational_space_controller_gains,
+            mode="reset",
+            params={
+                "action_name": "arm",
+                "stiffness_distribution_params": (0.9, 0.9),
+                "damping_distribution_params": (1.0, 1.0),
+                "operation": "scale",
+                "distribution": "uniform",
+            },
+        )
+        self.events.reset_from_reset_states = EventTerm(
+            func=task_mdp.MultiResetManager,
+            mode="reset",
+            params={
+                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectRestingEEGrasped"],
+                "probs": [1.0],
+                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+            },
+        )
+
+
+@configclass
+class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
+    """Eval variant 2: mid-high stiffness, ObjectAnywhereEEGrasped."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
+            func=task_mdp.randomize_operational_space_controller_gains,
+            mode="reset",
+            params={
+                "action_name": "arm",
+                "stiffness_distribution_params": (1.1, 1.1),
+                "damping_distribution_params": (1.05, 1.05),
+                "operation": "scale",
+                "distribution": "uniform",
+            },
+        )
+        self.events.reset_from_reset_states = EventTerm(
+            func=task_mdp.MultiResetManager,
+            mode="reset",
+            params={
+                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEGrasped"],
+                "probs": [1.0],
+                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+            },
+        )
+
+
+@configclass
+class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
+    """Eval variant 3: high stiffness, ObjectPartiallyAssembledEEGrasped."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
+            func=task_mdp.randomize_operational_space_controller_gains,
+            mode="reset",
+            params={
+                "action_name": "arm",
+                "stiffness_distribution_params": (1.3, 1.3),
+                "damping_distribution_params": (1.1, 1.1),
+                "operation": "scale",
+                "distribution": "uniform",
+            },
+        )
+        self.events.reset_from_reset_states = EventTerm(
+            func=task_mdp.MultiResetManager,
+            mode="reset",
+            params={
+                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectPartiallyAssembledEEGrasped"],
+                "probs": [1.0],
+                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+            },
+        )
+
+
+EVAL_VARIANTS = [
+    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV0,
+    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1,
+    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2,
+    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3,
+]
 
 
 @configclass
