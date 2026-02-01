@@ -201,6 +201,21 @@ def joint_vel_l2_clamped(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Sce
     return torch.clamp(torch.sum(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1), 0, 1e4)
 
 
+def object_height_above_threshold(
+    env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, threshold_height: float
+) -> torch.Tensor:
+    """Reward for keeping the object above a threshold height relative to the table surface."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    object_height_w = asset.data.root_pos_w[:, 2]
+    
+    # Get robot base height as reference (table surface where robot sits)
+    robot: Articulation = env.scene["robot"]
+    robot_base_height_w = robot.data.root_pos_w[:, 2]
+    
+    height_above_table = object_height_w - robot_base_height_w  
+    return torch.where(height_above_table > threshold_height, 1.0, 0.0)
+
+
 class collision_free(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)

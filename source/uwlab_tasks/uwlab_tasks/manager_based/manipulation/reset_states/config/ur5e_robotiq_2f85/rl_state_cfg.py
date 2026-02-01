@@ -500,6 +500,15 @@ class RewardsCfg:
 
     dense_success_reward = RewTerm(func=task_mdp.dense_success_reward, weight=0.1, params={"std": 1.0})
 
+    object_lifted = RewTerm(
+        func=task_mdp.object_height_above_threshold,
+        weight=0.1,
+        params={
+            "asset_cfg": SceneEntityCfg("insertive_object"),
+            "threshold_height": 0.02,
+        },
+    )
+
     success_reward = RewTerm(func=task_mdp.success_reward, weight=1.0)
 
 
