@@ -46,4 +46,4 @@ class AdversaryActionCfg(ActionTermCfg):
 
     asset_name: str = "robot"
 
-    action_dim: int = 9
+    action_dim: int = 19

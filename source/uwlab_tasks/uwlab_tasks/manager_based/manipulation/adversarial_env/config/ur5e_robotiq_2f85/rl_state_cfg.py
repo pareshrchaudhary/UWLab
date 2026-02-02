@@ -172,29 +172,28 @@ class BaseEventCfg:
     #########################################################
     # Insertive Object
     #########################################################
-    # use large friction to avoid slipping
+    # Adversary action indices: [9] static_friction, [10] dynamic_friction
     insertive_object_material = EventTerm(
-        func=task_mdp.randomize_rigid_body_material,  # type: ignore
-        mode="startup",
+        func=task_mdp.adversary_insertive_object_material_from_action,  # type: ignore
+        mode="reset",
         params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("insertive_object"),
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
-            "restitution_range": (0.0, 0.0),
             "num_buckets": 256,
-            "asset_cfg": SceneEntityCfg("insertive_object"),
             "make_consistent": True,
         },
     )
 
+    # Adversary action index: [11] mass (absolute value, 0.02-0.2 kg)
     randomize_insertive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass, # type: ignore
-        mode="startup",
+        func=task_mdp.adversary_insertive_object_mass_from_action,  # type: ignore
+        mode="reset",
         params={
+            "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("insertive_object"),
-            # we assume insertive object is somewhere between 20g and 200g
-            "mass_distribution_params": (0.02, 0.2),
-            "operation": "abs",
-            "distribution": "uniform",
+            "mass_range": (0.02, 0.2),
             "recompute_inertia": True,
         },
     )
@@ -202,28 +201,28 @@ class BaseEventCfg:
     #########################################################
     # Receptive Object
     #########################################################
-    # use large friction to avoid slipping
+    # Adversary action indices: [12] static_friction, [13] dynamic_friction
     receptive_object_material = EventTerm(
-        func=task_mdp.randomize_rigid_body_material,  # type: ignore
-        mode="startup",
+        func=task_mdp.adversary_receptive_object_material_from_action,  # type: ignore
+        mode="reset",
         params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("receptive_object"),
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
-            "restitution_range": (0.0, 0.0),
             "num_buckets": 256,
-            "asset_cfg": SceneEntityCfg("receptive_object"),
             "make_consistent": True,
         },
     )
 
+    # Adversary action index: [14] mass (scale factor, 0.5-1.5x)
     randomize_receptive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass, # type: ignore
-        mode="startup",
+        func=task_mdp.adversary_receptive_object_mass_from_action,  # type: ignore
+        mode="reset",
         params={
+            "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("receptive_object"),
-            "mass_distribution_params": (0.5, 1.5),
-            "operation": "scale",
-            "distribution": "uniform",
+            "mass_scale_range": (0.5, 1.5),
             "recompute_inertia": True,
         },
     )
@@ -259,13 +258,8 @@ class BaseEventCfg:
     # mode: reset
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={}) # type: ignore
 
-#########################################################
-# Training Events
-#########################################################
-@configclass
-class TrainEventCfg(BaseEventCfg):
-    """Configuration for training events."""
-
+    # Training Events
+    # Adversary action indices: [15] prob_0, [16] prob_1, [17] prob_2, [18] prob_3
     reset_from_reset_states = EventTerm(
         func=task_mdp.MultiResetManager,
         mode="reset",
@@ -276,7 +270,9 @@ class TrainEventCfg(BaseEventCfg):
                 f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEGrasped",
                 f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectPartiallyAssembledEEGrasped",
             ],
-            "probs": [0.25, 0.25, 0.25, 0.25],
+            "action_name": "adversaryaction",
+            "action_prob_start_idx": 15,
+            "min_prob": 0.05,  # Minimum probability cap for each reset state
             "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
         },
     )
@@ -327,7 +323,7 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 9})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 19})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -379,7 +375,7 @@ class ObservationsCfg:
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 9})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 19})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -690,7 +686,7 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
 class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
     """Training configuration for Relative Cartesian OSC action space."""
 
-    events: TrainEventCfg = TrainEventCfg()
+    events: BaseEventCfg = BaseEventCfg()
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
 
     def __post_init__(self):
@@ -715,7 +711,7 @@ class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
 class Ur5eRobotiq2f85RelJointPosTrainCfg(Ur5eRobotiq2f85RlStateCfg):
     """Training configuration for Relative Joint Position action space."""
 
-    events: TrainEventCfg = TrainEventCfg()
+    events: BaseEventCfg = BaseEventCfg()
     actions: Ur5eRobotiq2f85RelativeJointPositionAction = Ur5eRobotiq2f85RelativeJointPositionAction()
 
     def __post_init__(self):

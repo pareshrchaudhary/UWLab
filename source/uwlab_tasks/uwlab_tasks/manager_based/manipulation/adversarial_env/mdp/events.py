@@ -1000,10 +1000,16 @@ class MultiResetManager(ManagerTermBase):
 
         base_paths: list[str] = cfg.params.get("base_paths", [])
         probabilities: list[float] = cfg.params.get("probs", [])
+        self.action_name: str | None = cfg.params.get("action_name", None)
+        self.action_prob_start_idx: int = cfg.params.get("action_prob_start_idx", 15)
+        self.min_prob: float = cfg.params.get("min_prob", 0.05)
 
         if not base_paths:
             raise ValueError("No base paths provided")
-        if len(base_paths) != len(probabilities):
+        # If using adversary action, probs can be empty - we'll initialize with uniform
+        if not probabilities and self.action_name is not None:
+            probabilities = [1.0 / len(base_paths)] * len(base_paths)
+        elif len(base_paths) != len(probabilities):
             raise ValueError("Number of base paths must match number of probabilities")
 
         # Compute dataset paths using object hash
@@ -1053,11 +1059,31 @@ class MultiResetManager(ManagerTermBase):
         env: ManagerBasedEnv,
         env_ids: torch.Tensor,
         base_paths: list[str],
-        probs: list[float],
+        probs: list[float] = [],
         success: str | None = None,
+        action_name: str | None = None,
+        action_prob_start_idx: int = 15,
+        min_prob: float = 0.05,
     ) -> None:
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self._env.device)
+
+        # Get probabilities from adversary action
+        if self.action_name is not None:
+            raw_actions = _get_action_term_raw_actions(env, self.action_name)
+            # Extract probability values from adversary action indices [15, 16, 17, 18]
+            # Use softmax to convert raw action values to valid probabilities
+            prob_actions = raw_actions[:, self.action_prob_start_idx:self.action_prob_start_idx + self.num_tasks]
+            # Take mean across environments for a single probability distribution
+            prob_actions_mean = prob_actions.mean(dim=0)
+            # Apply softmax to ensure valid probability distribution
+            current_probs = torch.softmax(prob_actions_mean, dim=0)
+            # Apply minimum probability cap and renormalize
+            current_probs = torch.clamp(current_probs, min=self.min_prob)
+            current_probs = current_probs / current_probs.sum()
+            self.probs = current_probs
+        else:
+            current_probs = self.probs
 
         # Log current data
         if success is not None:
@@ -1071,12 +1097,12 @@ class MultiResetManager(ManagerTermBase):
             for task_idx in range(self.num_tasks):
                 self._env.extras["log"].update({
                     f"Metrics/task_{task_idx}_success_rate": success_rates[task_idx].item(),
-                    f"Metrics/task_{task_idx}_prob": self.probs[task_idx].item(),
-                    f"Metrics/task_{task_idx}_normalized_prob": self.probs[task_idx].item(),
+                    f"Metrics/task_{task_idx}_prob": current_probs[task_idx].item(),
+                    f"Metrics/task_{task_idx}_normalized_prob": current_probs[task_idx].item(),
                 })
 
         # Sample which dataset to use for each environment
-        dataset_indices = torch.multinomial(self.probs, len(env_ids), replacement=True)
+        dataset_indices = torch.multinomial(current_probs, len(env_ids), replacement=True)
         self.task_id[env_ids] = dataset_indices
 
         # Process each dataset's environments
@@ -1690,3 +1716,199 @@ def adversary_gripper_actuator_gains_from_action(
         actuator.damping[env_ids] = damping
         if isinstance(actuator, ImplicitActuator):
             asset.write_joint_damping_to_sim(damping, joint_ids=actuator.joint_indices, env_ids=env_ids)
+
+
+def adversary_insertive_object_material_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    static_friction_range: tuple[float, float],
+    dynamic_friction_range: tuple[float, float],
+    num_buckets: int = 256,
+    make_consistent: bool = True,
+) -> None:
+    """Set insertive object material params from adversary action (reset-only).
+
+    Expected action layout (dim=15):
+        [9] insertive_object static_friction (absolute)
+        [10] insertive_object dynamic_friction (absolute)
+    """
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    env_ids_cpu = env_ids.cpu()
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
+
+    # Get the asset from the scene
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # Clamp adversary-chosen absolute values (IsaacLab uses CPU tensors for materials).
+    static_friction = torch.clamp(a[:, 9], static_friction_range[0], static_friction_range[1]).to("cpu")
+    dynamic_friction = torch.clamp(a[:, 10], dynamic_friction_range[0], dynamic_friction_range[1]).to("cpu")
+    if make_consistent:
+        dynamic_friction = torch.minimum(dynamic_friction, static_friction)
+
+    # Retrieve material buffer from the physics simulation and update.
+    materials = asset.root_physx_view.get_material_properties()
+    materials[env_ids_cpu, :, 0] = static_friction.view(-1, 1)
+    materials[env_ids_cpu, :, 1] = dynamic_friction.view(-1, 1)
+    materials[env_ids_cpu, :, 2] = 0.0  # restitution
+
+    # Apply to simulation
+    asset.root_physx_view.set_material_properties(materials, env_ids_cpu)
+
+
+def adversary_receptive_object_material_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    static_friction_range: tuple[float, float],
+    dynamic_friction_range: tuple[float, float],
+    num_buckets: int = 256,
+    make_consistent: bool = True,
+) -> None:
+    """Set receptive object material params from adversary action (reset-only).
+
+    Expected action layout (dim=15):
+        [12] receptive_object static_friction (absolute)
+        [13] receptive_object dynamic_friction (absolute)
+    """
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    env_ids_cpu = env_ids.cpu()
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
+
+    # Get the asset from the scene
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # Clamp adversary-chosen absolute values (IsaacLab uses CPU tensors for materials).
+    static_friction = torch.clamp(a[:, 12], static_friction_range[0], static_friction_range[1]).to("cpu")
+    dynamic_friction = torch.clamp(a[:, 13], dynamic_friction_range[0], dynamic_friction_range[1]).to("cpu")
+    if make_consistent:
+        dynamic_friction = torch.minimum(dynamic_friction, static_friction)
+
+    # Retrieve material buffer from the physics simulation and update.
+    materials = asset.root_physx_view.get_material_properties()
+    materials[env_ids_cpu, :, 0] = static_friction.view(-1, 1)
+    materials[env_ids_cpu, :, 1] = dynamic_friction.view(-1, 1)
+    materials[env_ids_cpu, :, 2] = 0.0  # restitution
+
+    # Apply to simulation
+    asset.root_physx_view.set_material_properties(materials, env_ids_cpu)
+
+
+def adversary_insertive_object_mass_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    mass_range: tuple[float, float],
+    recompute_inertia: bool = True,
+) -> None:
+    """Set insertive object mass from adversary action (reset-only).
+
+    Uses absolute mass value (not a scale factor) since insertive objects
+    can range from 20g to 200g.
+
+    Expected action layout (dim=15):
+        [11] insertive_object mass (absolute value in kg)
+    """
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    env_ids_cpu = env_ids.cpu()
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
+
+    # Get the asset from the scene
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # Resolve body indices
+    if asset_cfg.body_ids == slice(None):
+        body_ids = torch.arange(asset.num_bodies, dtype=torch.int, device="cpu")
+    else:
+        body_ids = torch.tensor(asset_cfg.body_ids, dtype=torch.int, device="cpu")
+
+    # Get the current masses of the bodies (num_envs, num_bodies)
+    masses = asset.root_physx_view.get_masses()
+
+    # Apply absolute mass value from adversary action
+    mass_value = torch.clamp(a[:, 11], mass_range[0], mass_range[1]).to("cpu")
+    masses[env_ids_cpu[:, None], body_ids] = mass_value.view(-1, 1)
+    masses = torch.clamp(masses, min=1e-6)
+
+    # Set the mass into the physics simulation
+    asset.root_physx_view.set_masses(masses, env_ids_cpu)
+
+    # Recompute inertia tensors if needed
+    if recompute_inertia:
+        # Compute the ratios of the new masses to the default masses.
+        ratios = masses[env_ids_cpu[:, None], body_ids] / asset.data.default_mass[env_ids_cpu[:, None], body_ids]
+
+        # Scale the inertia tensors by the ratios.
+        inertias = asset.root_physx_view.get_inertias()
+        # For rigid objects, inertia tensor is (num_envs, 9). Expect a single body.
+        if ratios.ndim == 2 and ratios.shape[1] == 1:
+            ratios = ratios[:, 0]
+        inertias[env_ids_cpu] = asset.data.default_inertia[env_ids_cpu] * ratios.view(-1, 1)
+
+        asset.root_physx_view.set_inertias(inertias, env_ids_cpu)
+
+
+def adversary_receptive_object_mass_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    mass_scale_range: tuple[float, float],
+    recompute_inertia: bool = True,
+) -> None:
+    """Set receptive object mass scaling from adversary action (reset-only).
+
+    Uses scale factor (not absolute value) to multiply default mass.
+
+    Expected action layout (dim=15):
+        [14] receptive_object mass scale factor
+    """
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    env_ids_cpu = env_ids.cpu()
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
+
+    # Get the asset from the scene
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    # Resolve body indices
+    if asset_cfg.body_ids == slice(None):
+        body_ids = torch.arange(asset.num_bodies, dtype=torch.int, device="cpu")
+    else:
+        body_ids = torch.tensor(asset_cfg.body_ids, dtype=torch.int, device="cpu")
+
+    # Get the current masses of the bodies (num_envs, num_bodies)
+    masses = asset.root_physx_view.get_masses()
+
+    # Reset to defaults, then apply per-env scaling.
+    masses[env_ids_cpu[:, None], body_ids] = asset.data.default_mass[env_ids_cpu[:, None], body_ids].clone()
+    mass_scale = torch.clamp(a[:, 14], mass_scale_range[0], mass_scale_range[1]).to("cpu")
+    masses[env_ids_cpu[:, None], body_ids] *= mass_scale.view(-1, 1)
+    masses = torch.clamp(masses, min=1e-6)
+
+    # Set the mass into the physics simulation
+    asset.root_physx_view.set_masses(masses, env_ids_cpu)
+
+    # Recompute inertia tensors if needed
+    if recompute_inertia:
+        # Compute the ratios of the new masses to the default masses.
+        ratios = masses[env_ids_cpu[:, None], body_ids] / asset.data.default_mass[env_ids_cpu[:, None], body_ids]
+
+        # Scale the inertia tensors by the ratios.
+        inertias = asset.root_physx_view.get_inertias()
+        # For rigid objects, inertia tensor is (num_envs, 9). Expect a single body.
+        if ratios.ndim == 2 and ratios.shape[1] == 1:
+            ratios = ratios[:, 0]
+        inertias[env_ids_cpu] = asset.data.default_inertia[env_ids_cpu] * ratios.view(-1, 1)
+
+        asset.root_physx_view.set_inertias(inertias, env_ids_cpu)
