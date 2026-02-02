@@ -146,38 +146,14 @@ class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
     """The number of steps per environment per update for the adversary."""
 
     obs_groups: dict[str, list[str]] = MISSING  # type: ignore
-    """A mapping from observation groups to observation sets for the protagonist."""
+    """A mapping from observation groups to observation sets for the main policy."""
     adversary_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
     """A mapping from observation groups to observation sets for the adversary."""
-    """A mapping from observation groups to observation sets.
-
-    The keys of the dictionary are predefined observation sets used by the underlying algorithm
-    and values are lists of observation groups provided by the environment.
-
-    For instance, if the environment provides a dictionary of observations with groups "policy", "images",
-    and "privileged", these can be mapped to algorithmic observation sets as follows:
-
-    .. code-block:: python
-
-        obs_groups = {
-            "policy": ["policy", "images"],
-            "critic": ["policy", "privileged"],
-        }
-
-    This way, the policy will receive the "policy" and "images" observations, and the critic will
-    receive the "policy" and "privileged" observations.
-
-    For more details, please check ``vec_env.py`` in the rsl_rl library.
-
-    Notes:
-        For actor-only adversary algorithms (e.g. `SimplePPO`), `adversary_obs_groups` may omit the
-        ``"critic"`` key. The runner maps it to the policy observations for compatibility.
-    """
 
     policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
-    """The policy configuration for the protagonist."""
+    """The policy configuration."""
     algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
-    """The algorithm configuration for the protagonist."""
+    """The algorithm configuration."""
 
     adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
     """The policy configuration for the adversary."""
@@ -203,39 +179,15 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """The number of steps per environment per update for the adversary."""
 
     obs_groups: dict[str, list[str]] = MISSING  # type: ignore
-    """A mapping from observation groups to observation sets for the protagonist."""
+    """A mapping from observation groups to observation sets for the main policy."""
     adversary_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
     """A mapping from observation groups to observation sets for the adversary."""
-    """A mapping from observation groups to observation sets.
-
-    The keys of the dictionary are predefined observation sets used by the underlying algorithm
-    and values are lists of observation groups provided by the environment.
-
-    For instance, if the environment provides a dictionary of observations with groups "policy", "images",
-    and "privileged", these can be mapped to algorithmic observation sets as follows:
-
-    .. code-block:: python
-
-        obs_groups = {
-            "policy": ["policy", "images"],
-            "critic": ["policy", "privileged"],
-        }
-
-    This way, the policy will receive the "policy" and "images" observations, and the critic will
-    receive the "policy" and "privileged" observations.
-
-    For more details, please check ``vec_env.py`` in the rsl_rl library.
-
-    Notes:
-        For actor-only adversary algorithms (e.g. `SimplePPO`), `adversary_obs_groups` may omit the
-        ``"critic"`` key. The runner maps it to the policy observations for compatibility.
-    """
 
     policy: RslRlAsymmetricActorCriticCfg = MISSING  # type: ignore
     """The policy configuration."""
 
     algorithm: RslRlPpoAlgorithmCfg = MISSING
-    """The algorithm configuration for the protagonist."""
+    """The algorithm configuration."""
 
     adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
     """The policy configuration for the adversary."""
@@ -252,3 +204,27 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
 
     If regex expression, the latest (alphabetical order) matching file will be loaded.
     """
+
+@configclass
+class RslRlMARLFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the Multi-Agent RL runner with full recurrent policies."""
+
+    adversary_update_every_k_steps: int = MISSING  # type: ignore
+    """The number of steps per environment per update for the adversary."""
+
+    obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the main policy."""
+    adversary_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the adversary."""
+
+    policy: RslRLFancyActorCriticRecurrentCfg = MISSING  # type: ignore
+    """The policy configuration."""
+    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    """The algorithm configuration."""
+
+    adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration for the adversary."""
+    adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
+    """The algorithm configuration for the adversary."""
+    load_run: str = ".*"
+    load_checkpoint: str = "model_.*.pt"
