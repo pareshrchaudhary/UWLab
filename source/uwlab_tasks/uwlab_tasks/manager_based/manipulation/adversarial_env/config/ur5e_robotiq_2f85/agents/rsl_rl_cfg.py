@@ -57,7 +57,7 @@ class Base_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
 class MultiAgentRunner(RslRlMARLRunnerCfg):
     class_name: str = "MultiAgentRunner"
     num_steps_per_env = 32
-    adversary_update_every_k_steps = 30
+    adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
     experiment_name = "ur5e_robotiq_2f85_adversarial"
@@ -125,7 +125,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
 class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
     class_name: str = "MultiAgentRunner"
     num_steps_per_env = 32
-    adversary_update_every_k_steps = 30
+    adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
     experiment_name = "ur5e_robotiq_2f85_adversarial_recurrent"
@@ -196,7 +196,7 @@ class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
 class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
     class_name: str = "MultiAgentRunner"
     num_steps_per_env = 32
-    adversary_update_every_k_steps = 5
+    adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
     experiment_name = "ur5e_robotiq_2f85_adversarial_full_recurrent"

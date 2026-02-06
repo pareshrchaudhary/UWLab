@@ -142,8 +142,8 @@ class RslRlOnPolicyFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
 class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration of the Multi-Agent Reinforcement Learning runner."""
 
-    adversary_update_every_k_steps: int = MISSING  # type: ignore
-    """The number of steps per environment per update for the adversary."""
+    adversary_update_every_k_episodes: int = MISSING  # type: ignore
+    """Adversary updates every k completed episodes across all envs."""
 
     obs_groups: dict[str, list[str]] = MISSING  # type: ignore
     """A mapping from observation groups to observation sets for the main policy."""
@@ -175,8 +175,8 @@ class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
 class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration of the Multi-Agent Reinforcement Learning runner with recurrent policies."""
 
-    adversary_update_every_k_steps: int = MISSING  # type: ignore
-    """The number of steps per environment per update for the adversary."""
+    adversary_update_every_k_episodes: int = MISSING  # type: ignore
+    """Adversary updates every k completed episodes across all envs."""
 
     obs_groups: dict[str, list[str]] = MISSING  # type: ignore
     """A mapping from observation groups to observation sets for the main policy."""
@@ -209,8 +209,8 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
 class RslRlMARLFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """Configuration of the Multi-Agent RL runner with full recurrent policies."""
 
-    adversary_update_every_k_steps: int = MISSING  # type: ignore
-    """The number of steps per environment per update for the adversary."""
+    adversary_update_every_k_episodes: int = MISSING  # type: ignore
+    """Adversary updates every k completed episodes across all envs."""
 
     obs_groups: dict[str, list[str]] = MISSING  # type: ignore
     """A mapping from observation groups to observation sets for the main policy."""
