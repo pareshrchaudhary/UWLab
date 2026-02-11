@@ -349,7 +349,7 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
-            self.history_length = 1
+            self.history_length = 5
 
     @configclass
     class CriticCfg(ObsGroup):

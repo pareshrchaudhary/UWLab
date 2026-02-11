@@ -30,89 +30,33 @@ def _get_event_term_names(events_cfg) -> list[str]:
     return names
 
 
-def _params_equal(a: dict, b: dict) -> bool:
-    """Compare params dicts (handles common types; complex objects compared by str)."""
-    if set(a.keys()) != set(b.keys()):
-        return False
-    for k in a:
-        va, vb = a[k], b[k]
-        try:
-            if va == vb:
-                continue
-            if isinstance(va, (tuple, list)) and isinstance(vb, (tuple, list)) and len(va) == len(vb):
-                if all(x == y for x, y in zip(va, vb)):
-                    continue
-            if isinstance(va, dict) and isinstance(vb, dict) and _params_equal(va, vb):
-                continue
-            return False
-        except (TypeError, ValueError):
-            if str(va) != str(vb):
-                return False
-    return True
+NUM_EVAL_VARIANTS = len(EVAL_VARIANTS)
 
 
-def _extract_params_from_eval_variants():
-    """Extract all event params from EVAL_VARIANTS. Returns per-variant events and derived constants."""
-    variant_events: list[dict] = []
-    all_event_names: set[str] = set()
-    for variant_cls in EVAL_VARIANTS:
-        cfg = variant_cls()
-        events_dict = {}
-        for name in _get_event_term_names(cfg.events):
-            term = getattr(cfg.events, name)
-            events_dict[name] = {"func": term.func, "mode": term.mode, "params": dict(term.params)}
-            all_event_names.add(name)
-        variant_events.append(events_dict)
-
-    event_names = sorted(all_event_names)
-    varying_events = []
-    for name in event_names:
-        first_params = variant_events[0].get(name, {}).get("params", {})
-        for i in range(1, len(variant_events)):
-            other_params = variant_events[i].get(name, {}).get("params", {})
-            if not _params_equal(other_params, first_params):
-                varying_events.append(name)
-                break
-
-    base_paths = []
-    osc_variants = []
-    for ev in variant_events:
-        if "reset_from_reset_states" in ev:
-            base_paths.append(ev["reset_from_reset_states"]["params"]["base_paths"][0])
-        if "randomize_robot_actuator_parameters" in ev:
-            p = ev["randomize_robot_actuator_parameters"]["params"]
+def parse_osc_variants(variants_cli: list[str], variant_cfgs: list) -> list[dict]:
+    """Parse --variant strings into list of OSC gain dicts (one per variant, not per env)."""
+    if not variants_cli:
+        if not variant_cfgs:
+            raise ValueError("EVAL_VARIANTS is empty. Cannot parse OSC variants.")
+        osc_variants = []
+        for cfg in variant_cfgs:
+            p = cfg.events.randomize_robot_actuator_parameters.params
             osc_variants.append({
                 "stiffness_distribution_params": p["stiffness_distribution_params"],
                 "damping_distribution_params": p["damping_distribution_params"],
             })
+        return osc_variants
 
-    return {
-        "variant_events": variant_events,
-        "varying_events": varying_events,
-        "reset_state_base_paths": base_paths,
-        "default_osc_variants": osc_variants,
-    }
-
-
-EVAL_EXTRACTED = _extract_params_from_eval_variants()
-NUM_EVAL_VARIANTS = len(EVAL_EXTRACTED["variant_events"])
-
-
-def parse_osc_variants(variants_cli: list[str], num_envs: int) -> list[dict]:
-    """Parse --variant strings into list of OSC gain dicts."""
-    if not variants_cli:
-        return EVAL_EXTRACTED["default_osc_variants"][:num_envs]
-    parsed: list[dict] = []
+    parsed = []
     for s in variants_cli:
         parts = [p.strip() for p in s.split(",")]
         if len(parts) != 4:
             raise ValueError(f"Invalid --variant '{s}'. Expected 4 comma-separated floats.")
-        smn, smx, dmn, dmx = (float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]))
-        parsed.append(
-            {"stiffness_distribution_params": (smn, smx), "damping_distribution_params": (dmn, dmx)}
-        )
-    if len(parsed) != num_envs:
-        raise ValueError(f"Provided {len(parsed)} variants but num_envs={num_envs}. Provide exactly one per env.")
+        smn, smx, dmn, dmx = float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+        parsed.append({
+            "stiffness_distribution_params": (smn, smx),
+            "damping_distribution_params": (dmn, dmx)
+        })
     return parsed
 
 
@@ -125,16 +69,20 @@ def multi_variant_osc_gains(
     operation: str = "scale",
     distribution: str = "uniform",
 ) -> None:
-    """Apply per-env OSC gain variants (one config per env index)."""
+    """Apply per-variant OSC gain variants, batching envs by variant group."""
+    if not variants:
+        return
     if env_ids is None:
         env_ids = torch.arange(env.scene.num_envs, device=env.device)
-    for env_id in env_ids.tolist():
-        if env_id < 0 or env_id >= len(variants):
+    num_variants = len(variants)
+    for variant_idx, v in enumerate(variants):
+        mask = (env_ids % num_variants) == variant_idx
+        variant_env_ids = env_ids[mask]
+        if len(variant_env_ids) == 0:
             continue
-        v = variants[env_id]
         task_mdp.randomize_operational_space_controller_gains(
             env,
-            torch.tensor([env_id], device=env.device, dtype=torch.long),
+            variant_env_ids,
             action_name=action_name,
             stiffness_distribution_params=v["stiffness_distribution_params"],
             damping_distribution_params=v["damping_distribution_params"],
@@ -144,23 +92,26 @@ def multi_variant_osc_gains(
 
 
 def _make_multi_variant_event(base_func):
-    """Return a wrapper that applies base_func per-env with variant-specific params."""
+    """Return a wrapper that applies base_func batched by variant group."""
 
-    def wrapper(env, env_ids: torch.Tensor | None, *, variants: list[dict], **kwargs) -> None:
+    def wrapper(env, env_ids: torch.Tensor | None, variants: list[dict]) -> None:
+        if not variants:
+            return
         if env_ids is None:
             env_ids = torch.arange(env.scene.num_envs, device=env.device)
-        for env_id in env_ids.tolist():
-            if env_id < 0 or env_id >= len(variants):
+        num_variants = len(variants)
+        for variant_idx, params in enumerate(variants):
+            mask = (env_ids % num_variants) == variant_idx
+            variant_env_ids = env_ids[mask]
+            if len(variant_env_ids) == 0:
                 continue
-            params = {**kwargs, **variants[env_id]}
-            base_func(env, torch.tensor([env_id], device=env.device, dtype=torch.long), **params)
+            base_func(env, variant_env_ids, **params)
 
     return wrapper
 
 
 def apply_multi_eval_events(
     env_cfg,
-    num_envs: int,
     variants_cli: list[str],
     *,
     include_per_env_reset: bool = True,
@@ -168,17 +119,22 @@ def apply_multi_eval_events(
     """Apply multi-eval event overrides from EVAL_VARIANTS. Varying events get per-env params."""
     if not hasattr(env_cfg, "events"):
         return
-    osc_variants = parse_osc_variants(variants_cli, num_envs)
-    variant_events = [ev for ev in EVAL_EXTRACTED["variant_events"][:num_envs]]
-    varying_names = EVAL_EXTRACTED["varying_events"]
+
+    if not EVAL_VARIANTS:
+        raise ValueError("EVAL_VARIANTS is empty. Cannot apply multi-eval events.")
+
+    # Cache variant configs to avoid recreating them for every env
+    variant_cfgs = [variant_cls() for variant_cls in EVAL_VARIANTS]
+
+    osc_variants = parse_osc_variants(variants_cli, variant_cfgs)
+    first_variant_cfg = variant_cfgs[0]
 
     for name in _get_event_term_names(env_cfg.events):
-        if name not in varying_names:
+        if not hasattr(first_variant_cfg.events, name):
             continue
-        first = variant_events[0].get(name)
-        if not first:
-            continue
-        func, mode = first["func"], first["mode"]
+
+        first_term = getattr(first_variant_cfg.events, name)
+        func, mode = first_term.func, first_term.mode
 
         if name == "randomize_robot_actuator_parameters":
             env_cfg.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
@@ -187,17 +143,31 @@ def apply_multi_eval_events(
                 params={"action_name": "arm", "variants": osc_variants, "operation": "scale", "distribution": "uniform"},
             )
         elif name == "reset_from_reset_states" and include_per_env_reset:
+            # Extract unique base_paths from variants (one per variant, not per env)
+            base_paths = [
+                variant_cfgs[variant_idx].events.reset_from_reset_states.params["base_paths"][0]
+                for variant_idx in range(len(EVAL_VARIANTS))
+            ]
+
             env_cfg.events.reset_from_reset_states = EventTerm(
                 func=PerEnvMultiResetManager,
                 mode=mode,
                 params={
-                    "base_paths": EVAL_EXTRACTED["reset_state_base_paths"][:num_envs],
-                    "probs": [1.0 / num_envs] * num_envs,
+                    "base_paths": base_paths,
+                    "probs": [1.0 / len(EVAL_VARIANTS)] * len(EVAL_VARIANTS),
                     "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
                 },
             )
         elif callable(func):
-            params_list = [variant_events[i][name]["params"] for i in range(len(variant_events))]
+            params_list = [
+                dict(getattr(variant_cfgs[variant_idx].events, name).params)
+                for variant_idx in range(len(EVAL_VARIANTS))
+            ]
+
+            # Skip wrapping if all variants have identical params for this event
+            if all(p == params_list[0] for p in params_list):
+                continue
+
             env_cfg.events.__setattr__(name, EventTerm(  # type: ignore[attr-defined]
                 func=_make_multi_variant_event(func),
                 mode=mode,
