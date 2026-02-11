@@ -68,7 +68,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
-
+    adversary_initial_reset_probs = [0.10, 0.20, 0.30, 0.40]
     # Note: DO NOT TOUCH
     policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
@@ -111,7 +111,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
     adversary_algorithm = RslRlPpoAlgorithmCfg(
         class_name="SimplePPO",
         normalize_advantage_per_mini_batch=False,
-        clip_param=0.1,
+        clip_param=0.2,
         entropy_coef=0.006,
         num_learning_epochs=1,
         num_mini_batches=1,
@@ -136,6 +136,7 @@ class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
+    adversary_initial_reset_probs = [0.10, 0.20, 0.30, 0.40]
     # Note: DO NOT TOUCH
     policy = RslRlAsymmetricActorCriticCfg(
         init_noise_std=1.0,
@@ -207,6 +208,7 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
+    adversary_initial_reset_probs = [0.10, 0.20, 0.30, 0.40]
     policy = RslRLFancyActorCriticRecurrentCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -217,7 +219,7 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
         noise_std_type="gsde",
         state_dependent_std=False,
         rnn_type="lstm",
-        rnn_hidden_dim=512,
+        rnn_hidden_dim=256,
         rnn_num_layers=1,
     )
     algorithm = RslRlPpoAlgorithmCfg(

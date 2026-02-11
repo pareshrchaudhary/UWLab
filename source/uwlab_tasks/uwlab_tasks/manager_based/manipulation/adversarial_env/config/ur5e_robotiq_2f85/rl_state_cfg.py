@@ -126,8 +126,8 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot"),
-            "static_friction_range": (0.1, 2.0),
-            "dynamic_friction_range": (0.1, 2.0),
+            "static_friction_range": (0.3, 2.0),
+            "dynamic_friction_range": (0.2, 2.0),
             "num_buckets": 256,
             "make_consistent": True,
         },
@@ -140,7 +140,7 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot"),
-            "mass_scale_range": (0.1, 2.0),
+            "mass_scale_range": (0.7, 1.3),
             "recompute_inertia": True,
         },
     )
@@ -152,8 +152,8 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*", "finger_joint"]),
-            "friction_scale_range": (0.1, 4.0),
-            "armature_scale_range": (0.1, 4.0),
+            "friction_scale_range": (0.25, 4.0),
+            "armature_scale_range": (0.25, 4.0),
         },
     )
 
@@ -164,36 +164,34 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
-            "stiffness_scale_range": (0.1, 2.0),
-            "damping_scale_range": (0.1, 2.0),
+            "stiffness_scale_range": (0.5, 2.0),
+            "damping_scale_range": (0.5, 2.0),
         },
     )
 
     #########################################################
     # Insertive Object
     #########################################################
-    # Adversary action indices: [9] static_friction, [10] dynamic_friction
     insertive_object_material = EventTerm(
-        func=task_mdp.adversary_insertive_object_material_from_action,  # type: ignore
-        mode="reset",
+        func=task_mdp.randomize_rigid_body_material,  # type: ignore
+        mode="startup",
         params={
-            "action_name": "adversaryaction",
-            "asset_cfg": SceneEntityCfg("insertive_object"),
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
+            "restitution_range": (0.0, 0.0),
             "num_buckets": 256,
+            "asset_cfg": SceneEntityCfg("insertive_object"),
             "make_consistent": True,
         },
     )
-
-    # Adversary action index: [11] mass (absolute value, 0.02-0.2 kg)
     randomize_insertive_object_mass = EventTerm(
-        func=task_mdp.adversary_insertive_object_mass_from_action,  # type: ignore
-        mode="reset",
+        func=task_mdp.randomize_rigid_body_mass,
+        mode="startup",
         params={
-            "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("insertive_object"),
-            "mass_range": (0.02, 0.2),
+            "mass_distribution_params": (0.02, 0.2),
+            "operation": "abs",
+            "distribution": "uniform",
             "recompute_inertia": True,
         },
     )
@@ -201,28 +199,26 @@ class BaseEventCfg:
     #########################################################
     # Receptive Object
     #########################################################
-    # Adversary action indices: [12] static_friction, [13] dynamic_friction
     receptive_object_material = EventTerm(
-        func=task_mdp.adversary_receptive_object_material_from_action,  # type: ignore
-        mode="reset",
+        func=task_mdp.randomize_rigid_body_material,  # type: ignore
+        mode="startup",
         params={
-            "action_name": "adversaryaction",
-            "asset_cfg": SceneEntityCfg("receptive_object"),
             "static_friction_range": (1.0, 2.0),
             "dynamic_friction_range": (0.9, 1.9),
+            "restitution_range": (0.0, 0.0),
             "num_buckets": 256,
+            "asset_cfg": SceneEntityCfg("receptive_object"),
             "make_consistent": True,
         },
     )
-
-    # Adversary action index: [14] mass (scale factor, 0.5-1.5x)
     randomize_receptive_object_mass = EventTerm(
-        func=task_mdp.adversary_receptive_object_mass_from_action,  # type: ignore
-        mode="reset",
+        func=task_mdp.randomize_rigid_body_mass,
+        mode="startup",
         params={
-            "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("receptive_object"),
-            "mass_scale_range": (0.5, 1.5),
+            "mass_distribution_params": (0.5, 1.5),
+            "operation": "scale",
+            "distribution": "uniform",
             "recompute_inertia": True,
         },
     )
@@ -259,7 +255,7 @@ class BaseEventCfg:
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={}) # type: ignore
 
     # Training Events
-    # Adversary action indices: [15] prob_0, [16] prob_1, [17] prob_2, [18] prob_3
+    # Adversary prob logits are the last 4 dims of the adversary action (action_dim=13 => indices 9..12).
     reset_from_reset_states = EventTerm(
         func=task_mdp.MultiResetManager,
         mode="reset",
@@ -271,7 +267,8 @@ class BaseEventCfg:
                 f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectPartiallyAssembledEEGrasped",
             ],
             "action_name": "adversaryaction",
-            "action_prob_start_idx": 15,
+            "action_prob_start_idx": 9,
+            "probs": [0.10, 0.20, 0.30, 0.40],
             "min_prob": 0.05,  # Minimum probability cap for each reset state
             "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
         },
@@ -323,7 +320,7 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 19})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 13})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -369,13 +366,13 @@ class ObservationsCfg:
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
-            self.history_length = 1
+            self.history_length = 5
 
     @configclass
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 19})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 13})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -522,13 +519,13 @@ class RewardsCfg:
 
     # safety rewards
 
-    action_magnitude = RewTerm(func=task_mdp.action_l2_clamped, weight=-1e-5)
+    action_magnitude = RewTerm(func=task_mdp.action_l2_clamped, weight=-1e-4)
 
-    action_rate = RewTerm(func=task_mdp.action_rate_l2_clamped, weight=-1e-5)
+    action_rate = RewTerm(func=task_mdp.action_rate_l2_clamped, weight=-1e-4)
 
     joint_vel = RewTerm(
         func=task_mdp.joint_vel_l2_clamped,
-        weight=-1e-4,
+        weight=-1e-3,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"])},
     )
 

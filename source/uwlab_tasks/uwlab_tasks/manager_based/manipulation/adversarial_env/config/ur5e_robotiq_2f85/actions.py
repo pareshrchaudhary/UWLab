@@ -43,7 +43,7 @@ UR5E_ROBOTIQ_2F85_RELATIVE_OSC = TransformedOperationalSpaceControllerActionCfg(
     damping_ratio_scale=1.0,
 )
 
-UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION = AdversaryActionCfg(action_dim=19)
+UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION = AdversaryActionCfg(action_dim=13)
 
 
 @configclass

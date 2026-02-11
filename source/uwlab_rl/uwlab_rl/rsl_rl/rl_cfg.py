@@ -159,6 +159,9 @@ class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
+    adversary_initial_reset_probs: list[float] | None = None
+    """Initial reset-state probabilities for adversary output logits.
+    """
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
@@ -193,6 +196,8 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
+    adversary_initial_reset_probs: list[float] | None = None
+    """Initial reset-state probabilities for adversary output logits (indices 15-18). If set, last-layer bias is init so softmax ~ these probs."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 

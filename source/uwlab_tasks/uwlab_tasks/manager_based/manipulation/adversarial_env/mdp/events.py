@@ -1001,7 +1001,7 @@ class MultiResetManager(ManagerTermBase):
         base_paths: list[str] = cfg.params.get("base_paths", [])
         probabilities: list[float] = cfg.params.get("probs", [])
         self.action_name: str | None = cfg.params.get("action_name", None)
-        self.action_prob_start_idx: int = cfg.params.get("action_prob_start_idx", 15)
+        self.action_prob_start_idx: int = cfg.params.get("action_prob_start_idx", 9)
         self.min_prob: float = cfg.params.get("min_prob", 0.05)
 
         if not base_paths:
@@ -1062,7 +1062,7 @@ class MultiResetManager(ManagerTermBase):
         probs: list[float] = [],
         success: str | None = None,
         action_name: str | None = None,
-        action_prob_start_idx: int = 15,
+        action_prob_start_idx: int = 9,
         min_prob: float = 0.05,
     ) -> None:
         if env_ids is None:
@@ -1072,18 +1072,21 @@ class MultiResetManager(ManagerTermBase):
         if self.action_name is not None:
             raw_actions = _get_action_term_raw_actions(env, self.action_name)
             # Extract probability values from adversary action indices [15, 16, 17, 18]
-            # Use softmax to convert raw action values to valid probabilities
             prob_actions = raw_actions[:, self.action_prob_start_idx:self.action_prob_start_idx + self.num_tasks]
-            # Take mean across environments for a single probability distribution
             prob_actions_mean = prob_actions.mean(dim=0)
-            # Apply softmax to ensure valid probability distribution
-            current_probs = torch.softmax(prob_actions_mean, dim=0)
-            # Apply minimum probability cap and renormalize
+            # Use configured initial probs until adversary has written non-zero values (raw_actions start as zeros)
+            if prob_actions_mean.abs().sum() < 1e-6:
+                current_probs = self.probs.clone()
+            else:
+                # Use softmax to convert raw action values to valid probabilities
+                current_probs = torch.softmax(prob_actions_mean, dim=0)
+                self.probs = current_probs
+            # Enforce minimum probability (0.05) for each task and renormalize
             current_probs = torch.clamp(current_probs, min=self.min_prob)
             current_probs = current_probs / current_probs.sum()
-            self.probs = current_probs
         else:
-            current_probs = self.probs
+            current_probs = torch.clamp(self.probs.clone(), min=self.min_prob)
+            current_probs = current_probs / current_probs.sum()
 
         # Log current data
         if success is not None:
