@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+import inspect
+
 import torch
 from isaaclab.assets import Articulation
 from isaaclab.envs import ManagerBasedEnv
-from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import EventTermCfg as EventTerm, ManagerTermBase
 
 from ... import mdp as task_mdp
 from ...mdp.events import MultiResetManager, sample_from_nested_dict
@@ -110,6 +112,40 @@ def _make_multi_variant_event(base_func):
     return wrapper
 
 
+def _make_multi_variant_class_event(base_class):
+    """Return a ManagerTermBase subclass that dispatches per variant group.
+
+    For class-based event terms (e.g. randomize_rigid_body_material), each variant
+    needs its own instance since __init__ pre-computes internal state (e.g. material
+    buckets) from the config params.
+    """
+
+    class MultiVariantTerm(ManagerTermBase):
+        def __init__(self, cfg: EventTerm, env: ManagerBasedEnv):
+            super().__init__(cfg, env)
+            variants = cfg.params["variants"]
+            self.num_variants = len(variants)
+            # Create one instance per variant with its own params
+            self.variant_instances = []
+            for variant_params in variants:
+                variant_cfg = EventTerm(func=base_class, mode=cfg.mode, params=variant_params)
+                self.variant_instances.append(base_class(variant_cfg, env))
+
+        def __call__(self, env, env_ids, variants):
+            if env_ids is None:
+                env_ids = torch.arange(env.scene.num_envs, device=env.device)
+            for variant_idx, (instance, params) in enumerate(
+                zip(self.variant_instances, variants)
+            ):
+                mask = (env_ids % self.num_variants) == variant_idx
+                variant_env_ids = env_ids[mask]
+                if len(variant_env_ids) == 0:
+                    continue
+                instance(env, variant_env_ids, **params)
+
+    return MultiVariantTerm
+
+
 def apply_multi_eval_events(
     env_cfg,
     variants_cli: list[str],
@@ -168,8 +204,15 @@ def apply_multi_eval_events(
             if all(p == params_list[0] for p in params_list):
                 continue
 
+            # Use class-based wrapper for ManagerTermBase subclasses,
+            # plain function wrapper otherwise
+            if inspect.isclass(func) and issubclass(func, ManagerTermBase):
+                wrapper_func = _make_multi_variant_class_event(func)
+            else:
+                wrapper_func = _make_multi_variant_event(func)
+
             env_cfg.events.__setattr__(name, EventTerm(  # type: ignore[attr-defined]
-                func=_make_multi_variant_event(func),
+                func=wrapper_func,
                 mode=mode,
                 params={"variants": params_list},
             ))
