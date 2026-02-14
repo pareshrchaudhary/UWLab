@@ -32,6 +32,8 @@ from uwlab_tasks.manager_based.manipulation.adversarial_env.config.ur5e_robotiq_
 )
 
 from ... import mdp as task_mdp
+from ...mdp import events_adversary as adv_mdp
+from ...mdp.events_adversary import AdversaryControlledReset
 
 #########################################################
 # Base Scene Configuration
@@ -121,7 +123,7 @@ class BaseEventCfg:
     #########################################################
     # Adversary action indices: [0] static_friction, [1] dynamic_friction
     robot_material = EventTerm(
-        func=task_mdp.adversary_robot_material_from_action,  # type: ignore
+        func=adv_mdp.adversary_robot_material_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -135,7 +137,7 @@ class BaseEventCfg:
 
     # Adversary action index: [2] mass_scale
     randomize_robot_mass = EventTerm(
-        func=task_mdp.adversary_robot_mass_from_action,  # type: ignore
+        func=adv_mdp.adversary_robot_mass_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -147,7 +149,7 @@ class BaseEventCfg:
 
     # Adversary action indices: [3] friction_scale, [4] armature_scale
     randomize_robot_joint_parameters = EventTerm(
-        func=task_mdp.adversary_robot_joint_parameters_from_action,  # type: ignore
+        func=adv_mdp.adversary_robot_joint_parameters_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -159,7 +161,7 @@ class BaseEventCfg:
 
     # Adversary action indices: [5] stiffness_scale, [6] damping_scale
     randomize_gripper_actuator_parameters = EventTerm(
-        func=task_mdp.adversary_gripper_actuator_gains_from_action,  # type: ignore
+        func=adv_mdp.adversary_gripper_actuator_gains_from_action,  # type: ignore
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -254,23 +256,26 @@ class BaseEventCfg:
     # mode: reset
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={}) # type: ignore
 
-    # Training Events
-    # Adversary prob logits are the last 4 dims of the adversary action (action_dim=13 => indices 9..12).
-    reset_from_reset_states = EventTerm(
-        func=task_mdp.MultiResetManager,
+    # Training Events: Adversary-controlled reset (grasp + partial assembly from datasets)
+    reset_from_adversary = EventTerm(
+        func=AdversaryControlledReset,
         mode="reset",
         params={
-            "base_paths": [
-                f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEAnywhere",
-                f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectRestingEEGrasped",
-                f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEGrasped",
-                f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectPartiallyAssembledEEGrasped",
-            ],
             "action_name": "adversaryaction",
-            "action_prob_start_idx": 9,
-            "probs": [0.10, 0.20, 0.30, 0.40],
-            "min_prob": 0.05,  # Minimum probability cap for each reset state
-            "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+            "grasp_action_start_idx": 9,
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "robot_ik_cfg": SceneEntityCfg(
+                "robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"], body_names="robotiq_base_link"
+            ),
+            "gripper_cfg": SceneEntityCfg("robot", joint_names=["finger_joint", ".*right.*", ".*left.*"]),
+            "grasp_base_path": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/GraspSampling/ObjectPairs",
+            "partial_assembly_base_path": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/PartialAssemblies/ObjectPairs",
+            "init_grasp_prob": 0.7,        # biased toward grasped (near-goal)
+            "init_assembly_prob": 0.8,     # biased toward partial assembly (near-goal)
+            "workspace_x_range": (0.3, 0.55),
+            "workspace_y_range": (-0.1, 0.3),
+            "workspace_z_range": (0.0, 0.3),
         },
     )
 
@@ -320,7 +325,7 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 13})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 27})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -372,7 +377,7 @@ class ObservationsCfg:
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 13})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 27})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -692,7 +697,7 @@ class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
 
         # Adversary action indices: [7] osc_stiffness_scale, [8] osc_damping_scale
         self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore
-            func=task_mdp.adversary_operational_space_controller_gains_from_action,
+            func=adv_mdp.adversary_operational_space_controller_gains_from_action,
             mode="reset",
             params={
                 "adversary_action_name": "adversaryaction",

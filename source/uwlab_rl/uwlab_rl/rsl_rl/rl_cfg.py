@@ -159,9 +159,8 @@ class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
-    adversary_initial_reset_probs: list[float] | None = None
-    """Initial reset-state probabilities for adversary output logits.
-    """
+    adversary_initial_sigmoid_probs: list[float] | None = None
+    """Initial sigmoid probabilities for adversary output logits. Bias set to log(p/(1-p))."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
@@ -196,8 +195,8 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
-    adversary_initial_reset_probs: list[float] | None = None
-    """Initial reset-state probabilities for adversary output logits (indices 15-18). If set, last-layer bias is init so softmax ~ these probs."""
+    adversary_initial_sigmoid_probs: list[float] | None = None
+    """Initial sigmoid probabilities for adversary output logits. Bias set to log(p/(1-p))."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
@@ -231,5 +230,7 @@ class RslRlMARLFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
+    adversary_initial_sigmoid_probs: list[float] | None = None
+    """Initial sigmoid probabilities for adversary output logits. Bias set to log(p/(1-p))."""
     load_run: str = ".*"
     load_checkpoint: str = "model_.*.pt"

@@ -9,6 +9,7 @@ from uwlab.envs.mdp import *
 
 from .commands_cfg import *
 from .events import *
+from . import events_adversary
 from .observations import *
 from .recorders import *
 from .rewards import *

@@ -68,7 +68,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
-    adversary_initial_reset_probs = [0.10, 0.20, 0.30, 0.40]
+    adversary_initial_sigmoid_probs = [0.7, 0.8]  # grasp=70%, assembly=80%
     # Note: DO NOT TOUCH
     policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
@@ -136,7 +136,7 @@ class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
-    adversary_initial_reset_probs = [0.10, 0.20, 0.30, 0.40]
+    adversary_initial_sigmoid_probs = [0.7, 0.8]  # grasp=70%, assembly=80%
     # Note: DO NOT TOUCH
     policy = RslRlAsymmetricActorCriticCfg(
         init_noise_std=1.0,
@@ -208,7 +208,7 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
-    adversary_initial_reset_probs = [0.10, 0.20, 0.30, 0.40]
+    adversary_initial_sigmoid_probs = [0.7, 0.8]  # grasp=70%, assembly=80%
     policy = RslRLFancyActorCriticRecurrentCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
