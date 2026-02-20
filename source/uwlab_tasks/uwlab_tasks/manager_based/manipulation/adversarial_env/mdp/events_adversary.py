@@ -7,6 +7,8 @@
 
 import numpy as np
 import torch
+from types import SimpleNamespace
+import os
 
 import isaaclab.utils.math as math_utils
 from isaaclab.actuators import ImplicitActuator
@@ -20,6 +22,7 @@ from isaaclab.utils.version import get_isaac_sim_version
 
 from uwlab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from uwlab_tasks.manager_based.manipulation.reset_states.mdp import utils
+from uwlab_tasks.manager_based.manipulation.reset_states.mdp.collision_analyzer_cfg import CollisionAnalyzerCfg
 
 from .success_monitor_cfg import SuccessMonitorCfg
 
@@ -41,22 +44,63 @@ def _get_action_term_raw_actions(env: ManagerBasedEnv, action_name: str) -> torc
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _map_range(raw: torch.Tensor, lo: float, hi: float) -> torch.Tensor:
+    """Map values from [-1, 1] to [lo, hi]."""
+    return (raw + 1.0) / 2.0 * (hi - lo) + lo
+
+
+def _continuous_to_index(raw: torch.Tensor, pool_size: int) -> torch.Tensor:
+    """Map continuous [-1, 1] to integer dataset index in [0, pool_size-1]."""
+    return ((raw + 1.0) / 2.0 * pool_size).long().clamp(0, pool_size - 1)
+
+
+def _adv_debug_enabled(env: ManagerBasedEnv | None = None) -> bool:
+    if env is not None and bool(getattr(env, "_adversary_debug", False)):
+        return True
+    v = os.environ.get("UWLAB_ADVERSARY_DEBUG", "0").strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def _adv_debug(msg: str, env: ManagerBasedEnv | None = None) -> None:
+    if _adv_debug_enabled(env):
+        print(f"[AdversaryDebug] {msg}", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # AdversaryControlledReset
 # ---------------------------------------------------------------------------
 class AdversaryControlledReset(ManagerTermBase):
-    """Adversary-controlled reset that directly selects grasp and partial assembly poses from pools.
+    """MLP-based 4-mode adversary-controlled reset state generator.
 
-    Adversary action layout (indices relative to grasp_action_start_idx):
-        [0]  grasp_logit           sigmoid -> P(use grasp)
-        [1]  grasp_index           continuous [-1,1] mapped to pool index
-        [2]  assembly_logit        sigmoid -> P(use partial assembly)
-        [3]  assembly_index        continuous [-1,1] mapped to pool index
-        [4]  receptive_x           mapped to workspace range
-        [5]  receptive_y           mapped to workspace range
-        [6-8]   ee_pos  (x,y,z)   when do_grasp=False
-        [9-11]  ee_orient (r,p,y)  when do_grasp=False
-        [12-14] ins_pos  (x,y,z)  when do_assembly=False
-        [15-17] ins_orient (r,p,y) when do_assembly=False
+    The adversary outputs 16 continuous values (indices relative to ``grasp_action_start_idx``).
+    A mode is assigned **uniformly at random** (25 % each, not adversary-controlled).
+    Only the subset of outputs relevant to the assigned mode is used.
+
+    Adversary reset-state output layout (16 dims):
+        [0]  rec_x            receptive object x          [rec_x_range]
+        [1]  rec_y            receptive object y          [rec_y_range]
+        [2]  rec_yaw          receptive object yaw        [rec_yaw_range] (degrees)
+        [3]  ins_x            insertive object x          [ins_x_range]      (modes A, B)
+        [4]  ins_y            insertive object y          [ins_y_range]      (modes A, B)
+        [5]  ins_z            insertive object z          [ins_z_range]      (modes A, B)
+        [6]  ins_roll         insertive roll              [-pi, pi]          (modes A, B)
+        [7]  ins_pitch        insertive pitch             [-pi, pi]          (modes A, B)
+        [8]  ins_yaw          insertive yaw               [-pi, pi]          (modes A, B)
+        [9]  assembly_idx     partial-assembly pool idx   continuous->index  (modes C, D)
+        [10] grasp_idx        grasp pool idx              continuous->index  (modes B, D)
+        [11] ee_x             end-effector x              [ee_x_range]       (modes A, C)
+        [12] ee_y             end-effector y              [ee_y_range]       (modes A, C)
+        [13] ee_z             end-effector z              [ee_z_range]       (modes A, C)
+        [14] ee_pitch         end-effector pitch          bounded            (modes A, C)
+        [15] ee_yaw           end-effector yaw            bounded            (modes A, C)
+
+    4 Modes (uniform 25 % each):
+        A (0): Free insertive  + Free EE       (gripper open)
+        B (1): Free insertive  + Grasped EE    (gripper closed)
+        C (2): Assembly insert + Free EE       (gripper open)
+        D (3): Assembly insert + Grasped EE    (gripper closed)
     """
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
@@ -70,12 +114,26 @@ class AdversaryControlledReset(ManagerTermBase):
         gripper_cfg: SceneEntityCfg = cfg.params.get("gripper_cfg")
         self.grasp_base_path: str = cfg.params.get("grasp_base_path")
         self.partial_assembly_base_path: str = cfg.params.get("partial_assembly_base_path")
-        self.init_grasp_prob: float = cfg.params.get("init_grasp_prob", 0.5)
-        self.init_assembly_prob: float = cfg.params.get("init_assembly_prob", 0.5)
 
-        self.workspace_x_range: tuple[float, float] = cfg.params.get("workspace_x_range", (0.3, 0.55))
-        self.workspace_y_range: tuple[float, float] = cfg.params.get("workspace_y_range", (-0.1, 0.3))
-        self.workspace_z_range: tuple[float, float] = cfg.params.get("workspace_z_range", (0.0, 0.3))
+        # Workspace ranges
+        self.rec_x_range: tuple[float, float] = cfg.params.get("rec_x_range", (0.30, 0.55))
+        self.rec_y_range: tuple[float, float] = cfg.params.get("rec_y_range", (-0.10, 0.30))
+        self.rec_yaw_range: tuple[float, float] = cfg.params.get("rec_yaw_range", (-15.0, 15.0))
+        self.ins_x_range: tuple[float, float] = cfg.params.get("ins_x_range", (0.30, 0.55))
+        self.ins_y_range: tuple[float, float] = cfg.params.get("ins_y_range", (-0.10, 0.50))
+        self.ins_z_range: tuple[float, float] = cfg.params.get("ins_z_range", (0.00, 0.30))
+        self.ee_x_range: tuple[float, float] = cfg.params.get("ee_x_range", (0.30, 0.70))
+        self.ee_y_range: tuple[float, float] = cfg.params.get("ee_y_range", (-0.40, 0.40))
+        self.ee_z_range: tuple[float, float] = cfg.params.get("ee_z_range", (0.00, 0.50))
+        self.max_validation_attempts: int = cfg.params.get("max_validation_attempts", 10)
+        self.collision_num_points: int = cfg.params.get("collision_num_points", 256)
+        self.max_physics_retries: int = cfg.params.get("max_physics_retries", 3)
+        self.physics_validation_steps: int = cfg.params.get("physics_validation_steps", 50)
+        self.consecutive_stability_steps: int = cfg.params.get("consecutive_stability_steps", 5)
+        self.max_object_pos_deviation: float = cfg.params.get("max_object_pos_deviation", 0.025)
+        self.max_robot_pos_deviation: float = cfg.params.get("max_robot_pos_deviation", 0.05)
+        self.pos_z_threshold: float = cfg.params.get("pos_z_threshold", -0.02)
+        self.debug_print: bool = cfg.params.get("debug_print", False)
 
         # Assets
         self.insertive_object: RigidObject = env.scene[self.insertive_object_cfg.name]
@@ -101,15 +159,56 @@ class AdversaryControlledReset(ManagerTermBase):
         # Gripper metadata
         metadata = utils.read_metadata_from_usd_directory(self.robot.cfg.spawn.usd_path)
         self.gripper_open_joint_angle = metadata.get("finger_open_joint_angle", 0.04)
+        self.gripper_approach_direction = tuple(metadata.get("gripper_approach_direction", (0.0, 0.0, 1.0)))
+
+        # EE body index for pose deviation tracking
+        ee_body_name = robot_ik_cfg.body_names if isinstance(robot_ik_cfg.body_names, str) else robot_ik_cfg.body_names[0]
+        self.ee_body_idx = self.robot.data.body_names.index(ee_body_name)
+
+        # Assets to check for physics validation (objects + robot)
+        self.object_assets = [self.insertive_object, self.receptive_object]
+        self.assets_to_check = self.object_assets + [self.robot]
+
+        # Number of gripper joints for open-gripper writes
+        self._n_gripper_joints = (
+            len(self.gripper_joint_ids) if isinstance(self.gripper_joint_ids, list) else 1
+        )
 
         # Load datasets
         self._load_grasp_dataset(env)
         self._load_partial_assembly_dataset(env)
 
-        # Success monitor (4 modes from 2 binary flags)
+        # Success monitor (4 modes: A=0, B=1, C=2, D=3)
         success_monitor_cfg = SuccessMonitorCfg(monitored_history_len=100, num_monitored_data=4, device=env.device)
         self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
         self.mode_id = torch.zeros(env.num_envs, device=env.device, dtype=torch.long)
+
+        # Collision analyzers (SDF-based, same as check_reset_state_success)
+        robot_collision_cfg = SceneEntityCfg("robot")
+        robot_collision_cfg.resolve(env.scene)
+        ca_cfgs = [
+            CollisionAnalyzerCfg(
+                num_points=self.collision_num_points, max_dist=0.5, min_dist=-0.0005,
+                asset_cfg=robot_collision_cfg,
+                obstacle_cfgs=[self.insertive_object_cfg],
+            ),
+            CollisionAnalyzerCfg(
+                num_points=self.collision_num_points, max_dist=0.5, min_dist=0.0,
+                asset_cfg=robot_collision_cfg,
+                obstacle_cfgs=[self.receptive_object_cfg],
+            ),
+            CollisionAnalyzerCfg(
+                num_points=self.collision_num_points, max_dist=0.5, min_dist=-0.0005,
+                asset_cfg=self.insertive_object_cfg,
+                obstacle_cfgs=[self.receptive_object_cfg],
+            ),
+        ]
+        self.collision_analyzers = [ca_cfg.class_type(ca_cfg, env) for ca_cfg in ca_cfgs]
+        _adv_debug(
+            f"AdversaryControlledReset initialized: action='{self.action_name}', "
+            f"grasp_start={self.grasp_action_start_idx}, collision_points={self.collision_num_points}",
+            env,
+        )
 
     # ---- dataset loading ----
 
@@ -173,6 +272,317 @@ class AdversaryControlledReset(ManagerTermBase):
         self.assembly_rel_quaternions = rel_quat.to(env.device, dtype=torch.float32)
         print(f"[AdversaryControlledReset] Loaded {len(rel_pos)} partial assemblies from {path}")
 
+    # ---- pose composition from raw actions ----
+
+    def _decode_actions(self, a: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Decode the 16-dim action slice into named fields."""
+        return {
+            "rec_x_raw": a[:, 0],
+            "rec_y_raw": a[:, 1],
+            "rec_yaw_raw": a[:, 2],
+            "ins_x_raw": a[:, 3],
+            "ins_y_raw": a[:, 4],
+            "ins_z_raw": a[:, 5],
+            "ins_roll_raw": a[:, 6],
+            "ins_pitch_raw": a[:, 7],
+            "ins_yaw_raw": a[:, 8],
+            "asm_idx_raw": a[:, 9],
+            "grasp_idx_raw": a[:, 10],
+            "ee_x_raw": a[:, 11],
+            "ee_y_raw": a[:, 12],
+            "ee_z_raw": a[:, 13],
+            "ee_pitch_raw": a[:, 14],
+            "ee_yaw_raw": a[:, 15],
+        }
+
+    def _compose_receptive_pose(self, d: dict, env: ManagerBasedEnv, env_ids: torch.Tensor, num: int):
+        """Compose receptive object world-frame pose (all modes)."""
+        rec_x = _map_range(d["rec_x_raw"], *self.rec_x_range)
+        rec_y = _map_range(d["rec_y_raw"], *self.rec_y_range)
+        rec_yaw_deg = _map_range(d["rec_yaw_raw"], *self.rec_yaw_range)
+        rec_yaw_rad = rec_yaw_deg * (np.pi / 180.0)
+
+        table_z = env.scene["table"].data.root_pos_w[env_ids, 2]
+        recep_z = table_z + 0.881
+        recep_pos = torch.stack([rec_x, rec_y, recep_z], dim=1)
+        recep_quat = math_utils.quat_from_euler_xyz(
+            torch.zeros(num, device=env.device),
+            torch.zeros(num, device=env.device),
+            rec_yaw_rad,
+        )
+        return recep_pos, recep_quat
+
+    def _compose_insertive_pose(
+        self, d: dict, env: ManagerBasedEnv, env_ids: torch.Tensor, num: int,
+        mode: torch.Tensor, recep_pos: torch.Tensor, recep_quat: torch.Tensor,
+    ):
+        """Compose insertive object world-frame pose (mode-dependent)."""
+        ins_pos = torch.zeros((num, 3), device=env.device)
+        ins_quat = torch.zeros((num, 4), device=env.device)
+        ins_quat[:, 0] = 1.0  # default identity
+
+        ins_free = (mode == 0) | (mode == 1)  # modes A, B
+        ins_assembly = (mode == 2) | (mode == 3)  # modes C, D
+
+        support_z = env.scene["ur5_metal_support"].data.root_pos_w[env_ids, 2]
+
+        # Modes A, B: free insertive from adversary outputs
+        if ins_free.any():
+            m = ins_free
+            ix = _map_range(d["ins_x_raw"][m], *self.ins_x_range)
+            iy = _map_range(d["ins_y_raw"][m], *self.ins_y_range)
+            iz = _map_range(d["ins_z_raw"][m], *self.ins_z_range) + support_z[m] + 0.013
+            ins_pos[m] = torch.stack([ix, iy, iz], dim=1)
+            ins_quat[m] = math_utils.quat_from_euler_xyz(
+                d["ins_roll_raw"][m] * np.pi,
+                d["ins_pitch_raw"][m] * np.pi,
+                d["ins_yaw_raw"][m] * np.pi,
+            )
+
+        # Modes C, D: from partial assembly dataset relative to receptive
+        if ins_assembly.any():
+            m = ins_assembly
+            asm_indices = _continuous_to_index(d["asm_idx_raw"][m], len(self.assembly_rel_positions))
+            sp = self.assembly_rel_positions[asm_indices]
+            sq = self.assembly_rel_quaternions[asm_indices]
+            pw, qw = math_utils.combine_frame_transforms(recep_pos[m], recep_quat[m], sp, sq)
+            ins_pos[m] = pw
+            ins_quat[m] = qw
+
+        return ins_pos, ins_quat
+
+    # ---- IK helpers ----
+
+    def _solve_ik_and_write(self, env: ManagerBasedEnv, eids: torch.Tensor,
+                            target_pos_w: torch.Tensor, target_quat_w: torch.Tensor):
+        """Solve IK for target world-frame EE pose and write robot joint states."""
+        pos_b, quat_b = self.solver._compute_frame_pose()
+        pos_b[eids], quat_b[eids] = math_utils.subtract_frame_transforms(
+            self.robot.data.root_link_pos_w[eids],
+            self.robot.data.root_link_quat_w[eids],
+            target_pos_w,
+            target_quat_w,
+        )
+        self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
+        for _ in range(25):
+            self.solver.apply_actions()
+            delta = 0.25 * (self.robot.data.joint_pos_target[eids] - self.robot.data.joint_pos[eids])
+            self.robot.write_joint_state_to_sim(
+                position=(delta + self.robot.data.joint_pos[eids])[:, self.joint_ids],
+                velocity=torch.zeros((len(eids), self.n_joints), device=env.device),
+                joint_ids=self.joint_ids,
+                env_ids=eids,
+            )
+
+    def _set_gripper_open(self, env: ManagerBasedEnv, eids: torch.Tensor):
+        """Set gripper to open position."""
+        n = len(eids)
+        open_pos = torch.full((n, self._n_gripper_joints), float(self.gripper_open_joint_angle), device=env.device)
+        self.robot.write_joint_state_to_sim(
+            position=open_pos, velocity=torch.zeros_like(open_pos),
+            joint_ids=self.gripper_joint_ids, env_ids=eids,
+        )
+
+    def _set_gripper_from_dataset(self, env: ManagerBasedEnv, eids: torch.Tensor, grasp_indices: torch.Tensor):
+        """Set gripper to closed positions from grasp dataset."""
+        self.robot.write_joint_state_to_sim(
+            position=self.gripper_joint_positions[grasp_indices],
+            velocity=torch.zeros_like(self.gripper_joint_positions[grasp_indices]),
+            joint_ids=self.gripper_joint_ids,
+            env_ids=eids,
+        )
+
+    # ---- EE placement ----
+
+    def _place_ee(self, d: dict, env: ManagerBasedEnv, env_ids: torch.Tensor,
+                  mode: torch.Tensor, ins_pos: torch.Tensor, ins_quat: torch.Tensor):
+        """Place the end-effector via IK (mode-dependent)."""
+        ee_free = (mode == 0) | (mode == 2)  # modes A, C
+        ee_grasped = (mode == 1) | (mode == 3)  # modes B, D
+
+        # Modes A, C: free EE from adversary outputs
+        if ee_free.any():
+            m = ee_free
+            eids = env_ids[m]
+            ex = _map_range(d["ee_x_raw"][m], *self.ee_x_range)
+            ey = _map_range(d["ee_y_raw"][m], *self.ee_y_range)
+            ez = _map_range(d["ee_z_raw"][m], *self.ee_z_range)
+            # Roll fixed (pi for downward-facing), pitch and yaw from adversary
+            ee_roll = torch.full_like(d["ee_pitch_raw"][m], np.pi)
+            ee_quat = math_utils.quat_from_euler_xyz(
+                ee_roll,
+                d["ee_pitch_raw"][m] * (np.pi / 2.0),  # bounded [-pi/2, pi/2]
+                d["ee_yaw_raw"][m] * np.pi,             # bounded [-pi, pi]
+            )
+            ee_pos = torch.stack([ex, ey, ez], dim=1)
+            self._solve_ik_and_write(env, eids, ee_pos, ee_quat)
+            self._set_gripper_open(env, eids)
+
+        # Modes B, D: grasped EE from grasp dataset relative to insertive
+        if ee_grasped.any():
+            m = ee_grasped
+            eids = env_ids[m]
+            grasp_indices = _continuous_to_index(d["grasp_idx_raw"][m], len(self.grasp_rel_positions))
+            gp = self.grasp_rel_positions[grasp_indices]
+            gq = self.grasp_rel_quaternions[grasp_indices]
+            gw_pos, gw_quat = math_utils.combine_frame_transforms(ins_pos[m], ins_quat[m], gp, gq)
+            self._solve_ik_and_write(env, eids, gw_pos, gw_quat)
+            self._set_gripper_from_dataset(env, eids, grasp_indices)
+
+    # ---- validation ----
+
+    def _validate_poses(self, env: ManagerBasedEnv, env_ids: torch.Tensor,
+                        recep_pos: torch.Tensor, ins_pos: torch.Tensor,
+                        mode: torch.Tensor) -> torch.Tensor:
+        """Validate proposed object poses geometrically. Returns bool mask of valid envs."""
+        num = len(env_ids)
+        valid = torch.ones(num, dtype=torch.bool, device=env.device)
+
+        support_z = env.scene["ur5_metal_support"].data.root_pos_w[env_ids, 2]
+        floor_z = support_z + 0.013
+
+        ins_free = (mode == 0) | (mode == 1)
+
+        # Check 1: insertive object not below floor (free modes only)
+        if ins_free.any():
+            below_floor = ins_pos[ins_free, 2] < floor_z[ins_free]
+            valid_sub = valid[ins_free].clone()
+            valid_sub[below_floor] = False
+            valid[ins_free] = valid_sub
+
+        # Check 2: insertive within robot reachable workspace
+        ins_xy_dist = torch.norm(ins_pos[:, :2], dim=1)
+        valid &= ins_xy_dist < 0.85
+
+        # Check 3: minimum separation between insertive and receptive (free modes)
+        if ins_free.any():
+            dist = torch.norm(ins_pos[ins_free, :2] - recep_pos[ins_free, :2], dim=1)
+            valid_sub = valid[ins_free].clone()
+            valid_sub[dist < 0.03] = False
+            valid[ins_free] = valid_sub
+
+        # Check 4: receptive within robot reachable workspace
+        rec_xy_dist = torch.norm(recep_pos[:, :2], dim=1)
+        valid &= rec_xy_dist < 0.85
+
+        return valid
+
+    # ---- collision checking ----
+
+    def _check_collisions(self, env: ManagerBasedEnv, env_ids: torch.Tensor) -> torch.Tensor:
+        """Run SDF-based collision checks (robot↔objects, insertive↔receptive).
+
+        Returns bool mask: True = collision-free."""
+        return torch.all(
+            torch.stack([ca(env, env_ids) for ca in self.collision_analyzers]),
+            dim=0,
+        )
+
+    # ---- physics validation ----
+
+    def _physics_validate(self, env: ManagerBasedEnv, env_ids: torch.Tensor) -> torch.Tensor:
+        """Full physics validation replicating check_reset_state_success.
+
+        Saves sim state for ALL envs, steps physics N times, checks stability/collisions/
+        deviation/floor/gripper orientation on env_ids, then restores ALL envs to saved state.
+        Returns bool mask (len(env_ids),): True = valid.
+        """
+        num = len(env_ids)
+        all_env_ids = torch.arange(env.num_envs, device=env.device)
+
+        # ---- save ALL env states ----
+        saved_robot_root = self.robot.data.root_state_w.clone()
+        saved_robot_jp = self.robot.data.joint_pos.clone()
+        saved_robot_jv = self.robot.data.joint_vel.clone()
+        saved_ins = self.insertive_object.data.root_state_w.clone()
+        saved_rec = self.receptive_object.data.root_state_w.clone()
+
+        # ---- record initial poses for deviation checking (env_ids only) ----
+        init_ee_pos = self.robot.data.body_link_pos_w[env_ids, self.ee_body_idx].clone()
+        init_obj_pos = {}
+        for asset in self.object_assets:
+            init_obj_pos[id(asset)] = asset.data.root_pos_w[env_ids].clone()
+
+        # ---- step physics and track stability ----
+        stability_counter = torch.zeros(num, device=env.device, dtype=torch.int32)
+        for _ in range(self.physics_validation_steps):
+            env.sim.step(render=False)
+            env.scene.update(dt=env.physics_dt)
+
+            step_stable = torch.ones(num, device=env.device, dtype=torch.bool)
+            # Robot (Articulation) velocity check
+            step_stable &= self.robot.data.joint_vel[env_ids].abs().sum(dim=1) < 5.0
+            # Object (RigidObject) velocity checks
+            for obj in self.object_assets:
+                step_stable &= obj.data.body_lin_vel_w[env_ids].abs().sum(dim=2).sum(dim=1) < 0.1
+                step_stable &= obj.data.body_ang_vel_w[env_ids].abs().sum(dim=2).sum(dim=1) < 1.0
+
+            stability_counter = torch.where(
+                step_stable, stability_counter + 1, torch.zeros_like(stability_counter)
+            )
+
+        stability_reached = stability_counter >= self.consecutive_stability_steps
+
+        # ---- abnormal gripper state ----
+        abnormal_gripper = (
+            self.robot.data.joint_vel[env_ids].abs() > (self.robot.data.joint_vel_limits[env_ids] * 2)
+        ).any(dim=1)
+
+        # ---- gripper orientation (approach direction within 60-deg cone downward) ----
+        ee_quat = self.robot.data.body_link_quat_w[env_ids, self.ee_body_idx]
+        approach_local = torch.tensor(
+            self.gripper_approach_direction, device=env.device, dtype=torch.float32
+        ).expand(num, -1)
+        approach_world = math_utils.quat_apply(ee_quat, approach_local)
+        gripper_ok = approach_world[:, 2] < -0.5  # cos(60deg) = 0.5
+
+        # ---- pose deviation and floor penetration ----
+        excessive_dev = torch.zeros(num, device=env.device, dtype=torch.bool)
+        below_floor = torch.zeros(num, device=env.device, dtype=torch.bool)
+
+        # EE deviation
+        cur_ee_pos = self.robot.data.body_link_pos_w[env_ids, self.ee_body_idx]
+        skip_ee = (
+            torch.isnan(self.robot.data.root_pos_w[env_ids]).any(dim=1)
+            | torch.isnan(self.robot.data.root_quat_w[env_ids]).any(dim=1)
+        )
+        ee_dev = (cur_ee_pos - init_ee_pos).norm(dim=1)
+        ee_dev = torch.where(~skip_ee, ee_dev, torch.zeros_like(ee_dev))
+        excessive_dev |= ee_dev > self.max_robot_pos_deviation
+        below_floor |= cur_ee_pos[:, 2] < self.pos_z_threshold
+
+        # Object deviations
+        for asset in self.object_assets:
+            cur_pos = asset.data.root_pos_w[env_ids]
+            skip = torch.isnan(cur_pos).any(dim=1) | torch.isnan(asset.data.root_quat_w[env_ids]).any(dim=1)
+            dev = (cur_pos - init_obj_pos[id(asset)]).norm(dim=1)
+            dev = torch.where(~skip, dev, torch.zeros_like(dev))
+            excessive_dev |= dev > self.max_object_pos_deviation
+            below_floor |= cur_pos[:, 2] < self.pos_z_threshold
+
+        # ---- collision check (SDF) ----
+        collision_free = self._check_collisions(env, env_ids)
+
+        # ---- combine all checks ----
+        valid = (
+            (~abnormal_gripper)
+            & gripper_ok
+            & stability_reached
+            & (~excessive_dev)
+            & (~below_floor)
+            & collision_free
+        )
+
+        # ---- restore ALL env states ----
+        self.robot.write_root_state_to_sim(saved_robot_root, all_env_ids)
+        self.robot.write_joint_state_to_sim(saved_robot_jp, saved_robot_jv, env_ids=all_env_ids)
+        self.insertive_object.write_root_state_to_sim(saved_ins, all_env_ids)
+        self.receptive_object.write_root_state_to_sim(saved_rec, all_env_ids)
+        # Refresh data buffers so subsequent IK reads correct robot state
+        env.scene.update(dt=env.physics_dt)
+
+        return valid
+
     # ---- main reset call ----
 
     def __call__(
@@ -187,158 +597,158 @@ class AdversaryControlledReset(ManagerTermBase):
         gripper_cfg: SceneEntityCfg | None = None,
         grasp_base_path: str = "",
         partial_assembly_base_path: str = "",
-        init_grasp_prob: float = 0.5,
-        init_assembly_prob: float = 0.5,
-        workspace_x_range: tuple[float, float] = (0.3, 0.55),
-        workspace_y_range: tuple[float, float] = (-0.1, 0.3),
-        workspace_z_range: tuple[float, float] = (0.0, 0.3),
+        rec_x_range: tuple[float, float] = (0.30, 0.55),
+        rec_y_range: tuple[float, float] = (-0.10, 0.30),
+        rec_yaw_range: tuple[float, float] = (-15.0, 15.0),
+        ins_x_range: tuple[float, float] = (0.30, 0.55),
+        ins_y_range: tuple[float, float] = (-0.10, 0.50),
+        ins_z_range: tuple[float, float] = (0.00, 0.30),
+        ee_x_range: tuple[float, float] = (0.30, 0.70),
+        ee_y_range: tuple[float, float] = (-0.40, 0.40),
+        ee_z_range: tuple[float, float] = (0.00, 0.50),
+        max_validation_attempts: int = 10,
+        collision_num_points: int = 256,
+        max_physics_retries: int = 3,
+        physics_validation_steps: int = 50,
+        consecutive_stability_steps: int = 5,
+        max_object_pos_deviation: float = 0.025,
+        max_robot_pos_deviation: float = 0.05,
+        pos_z_threshold: float = -0.02,
     ) -> None:
         if env_ids is None:
             env_ids = torch.arange(env.num_envs, device=env.device)
         num = len(env_ids)
-        ws_x, ws_y, ws_z = self.workspace_x_range, self.workspace_y_range, self.workspace_z_range
+        _adv_debug(f"reset_from_adversary start: num_envs={num}", env)
 
-        # Read adversary actions (only the slice starting at grasp_action_start_idx)
+        # Read adversary actions (16-dim slice starting at grasp_action_start_idx)
         raw = _get_action_term_raw_actions(env, self.action_name)
-        a = raw[env_ids, self.grasp_action_start_idx:]  # (num, 18)
+        a = raw[env_ids, self.grasp_action_start_idx:]  # (num, 16)
+        _adv_debug(
+            f"reset actions slice: shape={tuple(a.shape)} mean={a.mean().item():.4f} std={a.std().item():.4f}",
+            env,
+        )
 
-        grasp_logit       = a[:, 0]
-        grasp_idx_raw     = a[:, 1]
-        assembly_logit    = a[:, 2]
-        assembly_idx_raw  = a[:, 3]
-        recep_x_raw       = a[:, 4]
-        recep_y_raw       = a[:, 5]
-        ee_pos_raw        = a[:, 6:9]
-        ee_orient_raw     = a[:, 9:12]
-        ins_pos_raw       = a[:, 12:15]
-        ins_orient_raw    = a[:, 15:18]
+        # Assign mode uniformly at random (NOT adversary-controlled)
+        # A=0, B=1, C=2, D=3 — each with 25% probability
+        mode = torch.randint(0, 4, (num,), device=env.device)
+        self.mode_id[env_ids] = mode
+        _adv_debug(
+            "mode counts: "
+            f"A={int((mode==0).sum().item())}, "
+            f"B={int((mode==1).sum().item())}, "
+            f"C={int((mode==2).sum().item())}, "
+            f"D={int((mode==3).sum().item())}",
+            env,
+        )
 
-        # Sample binary decisions
-        # Fallback to init probs when adversary hasn't output anything yet
-        if a.abs().mean() < 1e-6:
-            grasp_prob = torch.full_like(grasp_logit, self.init_grasp_prob)
-            assembly_prob = torch.full_like(assembly_logit, self.init_assembly_prob)
-        else:
-            grasp_prob = torch.sigmoid(grasp_logit)
-            assembly_prob = torch.sigmoid(assembly_logit)
-        do_grasp = torch.bernoulli(grasp_prob).bool()
-        do_assembly = torch.bernoulli(assembly_prob).bool()
+        # Decode actions
+        d = self._decode_actions(a)
 
-        # Mode tracking (grasp*2 + assembly -> 0..3)
-        self.mode_id[env_ids] = do_grasp.long() * 2 + do_assembly.long()
+        # Compose receptive pose (all modes)
+        recep_pos, recep_quat = self._compose_receptive_pose(d, env, env_ids, num)
 
-        # Map continuous [-1,1] to pool indices
-        grasp_indices = ((grasp_idx_raw + 1) / 2 * len(self.grasp_rel_positions)).long().clamp(0, len(self.grasp_rel_positions) - 1)
-        assembly_indices = ((assembly_idx_raw + 1) / 2 * len(self.assembly_rel_positions)).long().clamp(0, len(self.assembly_rel_positions) - 1)
+        # Compose insertive pose (mode-dependent)
+        ins_pos, ins_quat = self._compose_insertive_pose(d, env, env_ids, num, mode, recep_pos, recep_quat)
 
-        # ---- Place receptive object ----
-        recep_x = (recep_x_raw + 1) / 2 * (ws_x[1] - ws_x[0]) + ws_x[0]
-        recep_y = (recep_y_raw + 1) / 2 * (ws_y[1] - ws_y[0]) + ws_y[0]
-        table_z = env.scene["table"].data.root_pos_w[env_ids, 2]
-        recep_z = table_z + 0.881
-        recep_pos = torch.stack([recep_x, recep_y, recep_z], dim=1)
-        recep_quat = torch.zeros((num, 4), device=env.device)
-        recep_quat[:, 0] = 1.0
+        # Validate proposed poses; re-sample invalid ones from uniform random
+        valid = self._validate_poses(env, env_ids, recep_pos, ins_pos, mode)
+        rejection_count = 0
 
+        for _attempt in range(self.max_validation_attempts):
+            invalid = ~valid
+            if not invalid.any():
+                break
+            rejection_count += invalid.sum().item()
+            # Re-sample invalid envs with uniform random actions [-1, 1]
+            n_inv = invalid.sum()
+            a_resample = torch.rand((n_inv, 16), device=env.device) * 2.0 - 1.0
+            d_resample = self._decode_actions(a_resample)
+            rp, rq = self._compose_receptive_pose(d_resample, env, env_ids[invalid], int(n_inv))
+            ip, iq = self._compose_insertive_pose(
+                d_resample, env, env_ids[invalid], int(n_inv), mode[invalid], rp, rq,
+            )
+            # Update the invalid entries
+            recep_pos[invalid] = rp
+            recep_quat[invalid] = rq
+            ins_pos[invalid] = ip
+            ins_quat[invalid] = iq
+            # Also update decoded actions for EE placement later
+            for k in d:
+                d[k][invalid] = d_resample[k]
+            # Re-validate
+            valid[invalid] = self._validate_poses(env, env_ids[invalid], rp, ip, mode[invalid])
+
+        # Physics validation with retries (replicates check_reset_state_success)
+        physics_rejection_count = 0
+        for attempt in range(1 + self.max_physics_retries):
+            # Write objects to sim
+            self.receptive_object.write_root_state_to_sim(
+                root_state=torch.cat([recep_pos, recep_quat, torch.zeros((num, 6), device=env.device)], dim=-1),
+                env_ids=env_ids,
+            )
+            self.insertive_object.write_root_state_to_sim(
+                root_state=torch.cat([ins_pos, ins_quat, torch.zeros((num, 6), device=env.device)], dim=-1),
+                env_ids=env_ids,
+            )
+            # Place EE via IK (mode-dependent)
+            self._place_ee(d, env, env_ids, mode, ins_pos, ins_quat)
+
+            # Full physics validation (save → step → check → restore)
+            valid = self._physics_validate(env, env_ids)
+
+            if valid.all() or attempt == self.max_physics_retries:
+                break
+
+            physics_rejection_count += int((~valid).sum().item())
+
+            # Re-sample failing envs
+            failing = ~valid
+            n_fail = int(failing.sum())
+            fail_ids = env_ids[failing]
+
+            a_new = torch.rand((n_fail, 16), device=env.device) * 2.0 - 1.0
+            d_new = self._decode_actions(a_new)
+            mode[failing] = torch.randint(0, 4, (n_fail,), device=env.device)
+            self.mode_id[fail_ids] = mode[failing]
+
+            rp, rq = self._compose_receptive_pose(d_new, env, fail_ids, n_fail)
+            ip, iq = self._compose_insertive_pose(d_new, env, fail_ids, n_fail, mode[failing], rp, rq)
+
+            geo_ok = self._validate_poses(env, fail_ids, rp, ip, mode[failing])
+            update_mask = failing.clone()
+            update_mask[failing] &= geo_ok
+
+            if update_mask.any():
+                recep_pos[update_mask] = rp[geo_ok]
+                recep_quat[update_mask] = rq[geo_ok]
+                ins_pos[update_mask] = ip[geo_ok]
+                ins_quat[update_mask] = iq[geo_ok]
+                for k in d:
+                    d[k][update_mask] = d_new[k][geo_ok]
+
+        # Final write (physics_validate restores sim, so re-write validated states)
         self.receptive_object.write_root_state_to_sim(
             root_state=torch.cat([recep_pos, recep_quat, torch.zeros((num, 6), device=env.device)], dim=-1),
             env_ids=env_ids,
         )
-
-        # ---- Place insertive object ----
-        ins_pos = torch.zeros((num, 3), device=env.device)
-        ins_quat = torch.zeros((num, 4), device=env.device)
-        support_z = env.scene["ur5_metal_support"].data.root_pos_w[env_ids, 2]
-
-        if do_assembly.any():
-            m = do_assembly
-            sp = self.assembly_rel_positions[assembly_indices[m]]
-            sq = self.assembly_rel_quaternions[assembly_indices[m]]
-            pw, qw = math_utils.combine_frame_transforms(recep_pos[m], recep_quat[m], sp, sq)
-            ins_pos[m] = pw
-            ins_quat[m] = qw
-
-        if (~do_assembly).any():
-            m = ~do_assembly
-            ax = (ins_pos_raw[m, 0] + 1) / 2 * (ws_x[1] - ws_x[0]) + ws_x[0]
-            ay = (ins_pos_raw[m, 1] + 1) / 2 * (ws_y[1] - ws_y[0]) + ws_y[0]
-            az = (ins_pos_raw[m, 2] + 1) / 2 * (ws_z[1] - ws_z[0]) + ws_z[0] + support_z[m] + 0.013
-            ins_pos[m] = torch.stack([ax, ay, az], dim=1)
-            ins_quat[m] = math_utils.quat_from_euler_xyz(
-                ins_orient_raw[m, 0] * np.pi, ins_orient_raw[m, 1] * np.pi, ins_orient_raw[m, 2] * np.pi
-            )
-
         self.insertive_object.write_root_state_to_sim(
             root_state=torch.cat([ins_pos, ins_quat, torch.zeros((num, 6), device=env.device)], dim=-1),
             env_ids=env_ids,
         )
-
-        # ---- Place gripper via IK ----
-        if do_grasp.any():
-            m = do_grasp
-            eids = env_ids[m]
-            gp = self.grasp_rel_positions[grasp_indices[m]]
-            gq = self.grasp_rel_quaternions[grasp_indices[m]]
-            gw_pos, gw_quat = math_utils.combine_frame_transforms(ins_pos[m], ins_quat[m], gp, gq)
-
-            pos_b, quat_b = self.solver._compute_frame_pose()
-            pos_b[eids], quat_b[eids] = math_utils.subtract_frame_transforms(
-                self.robot.data.root_link_pos_w[eids], self.robot.data.root_link_quat_w[eids], gw_pos, gw_quat
-            )
-            self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
-            for _ in range(25):
-                self.solver.apply_actions()
-                delta = 0.25 * (self.robot.data.joint_pos_target[eids] - self.robot.data.joint_pos[eids])
-                self.robot.write_joint_state_to_sim(
-                    position=(delta + self.robot.data.joint_pos[eids])[:, self.joint_ids],
-                    velocity=torch.zeros((len(eids), self.n_joints), device=env.device),
-                    joint_ids=self.joint_ids, env_ids=eids,
-                )
-            self.robot.write_joint_state_to_sim(
-                position=self.gripper_joint_positions[grasp_indices[m]],
-                velocity=torch.zeros_like(self.gripper_joint_positions[grasp_indices[m]]),
-                joint_ids=self.gripper_joint_ids, env_ids=eids,
-            )
-
-        if (~do_grasp).any():
-            m = ~do_grasp
-            eids = env_ids[m]
-            n_ng = len(eids)
-            ex = (ee_pos_raw[m, 0] + 1) / 2 * (ws_x[1] - ws_x[0]) + ws_x[0]
-            ey = (ee_pos_raw[m, 1] + 1) / 2 * (ws_y[1] - ws_y[0]) + ws_y[0]
-            ez = (ee_pos_raw[m, 2] + 1) / 2 * 0.2 + 0.3
-            eq = math_utils.quat_from_euler_xyz(
-                ee_orient_raw[m, 0] * np.pi, ee_orient_raw[m, 1] * np.pi, ee_orient_raw[m, 2] * np.pi
-            )
-
-            pos_b, quat_b = self.solver._compute_frame_pose()
-            pos_b[eids] = torch.stack([ex, ey, ez], dim=1)
-            pos_b[eids], quat_b[eids] = math_utils.subtract_frame_transforms(
-                self.robot.data.root_link_pos_w[eids], self.robot.data.root_link_quat_w[eids], pos_b[eids], eq
-            )
-            self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
-            for _ in range(25):
-                self.solver.apply_actions()
-                delta = 0.25 * (self.robot.data.joint_pos_target[eids] - self.robot.data.joint_pos[eids])
-                self.robot.write_joint_state_to_sim(
-                    position=(delta + self.robot.data.joint_pos[eids])[:, self.joint_ids],
-                    velocity=torch.zeros((n_ng, self.n_joints), device=env.device),
-                    joint_ids=self.joint_ids, env_ids=eids,
-                )
-            n_gj = len(self.gripper_joint_ids) if isinstance(self.gripper_joint_ids, list) else 1
-            open_pos = torch.full((n_ng, n_gj), float(self.gripper_open_joint_angle), device=env.device)
-            self.robot.write_joint_state_to_sim(
-                position=open_pos, velocity=torch.zeros_like(open_pos),
-                joint_ids=self.gripper_joint_ids, env_ids=eids,
-            )
+        self._place_ee(d, env, env_ids, mode, ins_pos, ins_quat)
 
         # Reset velocities
         self.robot.set_joint_velocity_target(torch.zeros_like(self.robot.data.joint_vel[env_ids]), env_ids=env_ids)
 
-        # Log
-        self._log_metrics(env, env_ids, grasp_prob, assembly_prob, do_grasp, do_assembly)
+        # Log metrics
+        self._log_metrics(env, env_ids, mode, rejection_count, physics_rejection_count)
+        _adv_debug(
+            f"reset_from_adversary done: rejection_count={rejection_count}, "
+            f"physics_rejection_count={physics_rejection_count}",
+            env,
+        )
 
-    def _log_metrics(self, env, env_ids, grasp_prob, assembly_prob, do_grasp, do_assembly):
+    def _log_metrics(self, env, env_ids, mode, rejection_count, physics_rejection_count=0):
         if hasattr(env, "reward_manager") and hasattr(env.reward_manager, "get_term_cfg"):
             pc = env.reward_manager.get_term_cfg("progress_context")
             if pc is not None and hasattr(pc.func, "success"):
@@ -347,16 +757,91 @@ class AdversaryControlledReset(ManagerTermBase):
                 sr = self.success_monitor.get_success_rate()
                 if "log" not in env.extras:
                     env.extras["log"] = {}
-                names = ["AnywhereAnywhere", "AnywhereGrasped", "PartialAnywhere", "PartialGrasped"]
+                names = [
+                    "A_FreeObj_FreeEE",
+                    "B_FreeObj_GraspEE",
+                    "C_AssemblyObj_FreeEE",
+                    "D_AssemblyObj_GraspEE",
+                ]
                 for i in range(4):
                     env.extras["log"][f"Metrics/mode_{i}_{names[i]}_success_rate"] = sr[i].item()
 
         if "log" not in env.extras:
             env.extras["log"] = {}
-        env.extras["log"]["Metrics/adversary_grasp_prob"] = grasp_prob.mean().item()
-        env.extras["log"]["Metrics/adversary_assembly_prob"] = assembly_prob.mean().item()
-        env.extras["log"]["Metrics/actual_grasp_rate"] = do_grasp.float().mean().item()
-        env.extras["log"]["Metrics/actual_assembly_rate"] = do_assembly.float().mean().item()
+        for i in range(4):
+            env.extras["log"][f"Metrics/mode_{i}_fraction"] = (mode == i).float().mean().item()
+        env.extras["log"]["Metrics/validation_rejection_count"] = rejection_count
+        env.extras["log"]["Metrics/physics_rejection_count"] = physics_rejection_count
+
+
+def adversary_controlled_reset(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str = "",
+    grasp_action_start_idx: int = 9,
+    insertive_object_cfg: SceneEntityCfg | None = None,
+    receptive_object_cfg: SceneEntityCfg | None = None,
+    robot_ik_cfg: SceneEntityCfg | None = None,
+    gripper_cfg: SceneEntityCfg | None = None,
+    grasp_base_path: str = "",
+    partial_assembly_base_path: str = "",
+    rec_x_range: tuple[float, float] = (0.30, 0.55),
+    rec_y_range: tuple[float, float] = (-0.10, 0.30),
+    rec_yaw_range: tuple[float, float] = (-15.0, 15.0),
+    ins_x_range: tuple[float, float] = (0.30, 0.55),
+    ins_y_range: tuple[float, float] = (-0.10, 0.50),
+    ins_z_range: tuple[float, float] = (0.00, 0.30),
+    ee_x_range: tuple[float, float] = (0.30, 0.70),
+    ee_y_range: tuple[float, float] = (-0.40, 0.40),
+    ee_z_range: tuple[float, float] = (0.00, 0.50),
+    max_validation_attempts: int = 10,
+    collision_num_points: int = 256,
+    max_physics_retries: int = 3,
+    physics_validation_steps: int = 50,
+    consecutive_stability_steps: int = 5,
+    max_object_pos_deviation: float = 0.025,
+    max_robot_pos_deviation: float = 0.05,
+    pos_z_threshold: float = -0.02,
+    debug_print: bool = False,
+) -> None:
+    """Wrapper that lazily creates and reuses the stateful class term."""
+    if debug_print:
+        setattr(env, "_adversary_debug", True)
+    cache_attr = "_adversary_controlled_reset_term"
+    term = getattr(env, cache_attr, None)
+    if term is None:
+        params = {
+            "action_name": action_name,
+            "grasp_action_start_idx": grasp_action_start_idx,
+            "insertive_object_cfg": insertive_object_cfg,
+            "receptive_object_cfg": receptive_object_cfg,
+            "robot_ik_cfg": robot_ik_cfg,
+            "gripper_cfg": gripper_cfg,
+            "grasp_base_path": grasp_base_path,
+            "partial_assembly_base_path": partial_assembly_base_path,
+            "rec_x_range": rec_x_range,
+            "rec_y_range": rec_y_range,
+            "rec_yaw_range": rec_yaw_range,
+            "ins_x_range": ins_x_range,
+            "ins_y_range": ins_y_range,
+            "ins_z_range": ins_z_range,
+            "ee_x_range": ee_x_range,
+            "ee_y_range": ee_y_range,
+            "ee_z_range": ee_z_range,
+            "max_validation_attempts": max_validation_attempts,
+            "collision_num_points": collision_num_points,
+            "max_physics_retries": max_physics_retries,
+            "physics_validation_steps": physics_validation_steps,
+            "consecutive_stability_steps": consecutive_stability_steps,
+            "max_object_pos_deviation": max_object_pos_deviation,
+            "max_robot_pos_deviation": max_robot_pos_deviation,
+            "pos_z_threshold": pos_z_threshold,
+            "debug_print": debug_print,
+        }
+        term = AdversaryControlledReset(SimpleNamespace(params=params), env)
+        setattr(env, cache_attr, term)
+        _adv_debug("created cached AdversaryControlledReset term", env)
+    term(env, env_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +868,10 @@ def adversary_operational_space_controller_gains_from_action(
     controller = osc_term._osc
     adv_raw = _get_action_term_raw_actions(env, adversary_action_name)
     a = adv_raw[env_ids]
+    _adv_debug(
+        f"osc gains update: n={len(env_ids)}, stiff_idx={action_stiffness_index}, damp_idx={action_damping_index}",
+        env,
+    )
     original_stiffness = torch.tensor(controller.cfg.motion_stiffness_task, device=env.device)
     original_damping = torch.tensor(controller.cfg.motion_damping_ratio_task, device=env.device)
     for i in range(len(env_ids)):
@@ -418,6 +907,10 @@ def adversary_robot_material_from_action(
     df = torch.clamp(a[:, 1], dynamic_friction_range[0], dynamic_friction_range[1]).to("cpu")
     if make_consistent:
         df = torch.minimum(df, sf)
+    _adv_debug(
+        f"robot material: n={len(env_ids_cpu)}, sf_mean={sf.mean().item():.4f}, df_mean={df.mean().item():.4f}",
+        env,
+    )
     materials = asset.root_physx_view.get_material_properties()
     materials[env_ids_cpu, :, 0] = sf.view(-1, 1)
     materials[env_ids_cpu, :, 1] = df.view(-1, 1)
@@ -438,6 +931,7 @@ def adversary_robot_mass_from_action(
     masses = asset.root_physx_view.get_masses()
     masses[env_ids_cpu[:, None], body_ids] = asset.data.default_mass[env_ids_cpu[:, None], body_ids].clone()
     mass_scale = torch.clamp(a[:, 2], mass_scale_range[0], mass_scale_range[1]).to("cpu")
+    _adv_debug(f"robot mass: n={len(env_ids_cpu)}, mass_scale_mean={mass_scale.mean().item():.4f}", env)
     masses[env_ids_cpu[:, None], body_ids] *= mass_scale.view(-1, 1)
     masses = torch.clamp(masses, min=1e-6)
     asset.root_physx_view.set_masses(masses, env_ids_cpu)
@@ -466,6 +960,11 @@ def adversary_robot_joint_parameters_from_action(
     env_ids_for_slice = env_ids[:, None] if env_ids != slice(None) and joint_ids != slice(None) else env_ids
     friction_scale = torch.clamp(a[:, 3], friction_scale_range[0], friction_scale_range[1]).to(asset.device)
     armature_scale = torch.clamp(a[:, 4], armature_scale_range[0], armature_scale_range[1]).to(asset.device)
+    _adv_debug(
+        f"robot joints: n={len(env_ids)}, friction_scale_mean={friction_scale.mean().item():.4f}, "
+        f"armature_scale_mean={armature_scale.mean().item():.4f}",
+        env,
+    )
 
     friction_coeff = asset.data.default_joint_friction_coeff.clone()
     friction_coeff[env_ids_for_slice, joint_ids] *= friction_scale.view(-1, 1)
@@ -505,6 +1004,11 @@ def adversary_gripper_actuator_gains_from_action(
     a = raw_actions[env_ids.to(raw_actions.device)]
     stiffness_scale = torch.clamp(a[:, 5], stiffness_scale_range[0], stiffness_scale_range[1]).to(asset.device)
     damping_scale = torch.clamp(a[:, 6], damping_scale_range[0], damping_scale_range[1]).to(asset.device)
+    _adv_debug(
+        f"gripper gains: n={len(env_ids)}, stiffness_scale_mean={stiffness_scale.mean().item():.4f}, "
+        f"damping_scale_mean={damping_scale.mean().item():.4f}",
+        env,
+    )
     for actuator in asset.actuators.values():
         if isinstance(asset_cfg.joint_ids, slice):
             actuator_indices = slice(None)
@@ -551,6 +1055,10 @@ def adversary_insertive_object_material_from_action(
     df = torch.clamp(a[:, 10], dynamic_friction_range[0], dynamic_friction_range[1]).to("cpu")
     if make_consistent:
         df = torch.minimum(df, sf)
+    _adv_debug(
+        f"insertive material: n={len(env_ids_cpu)}, sf_mean={sf.mean().item():.4f}, df_mean={df.mean().item():.4f}",
+        env,
+    )
     materials = asset.root_physx_view.get_material_properties()
     materials[env_ids_cpu, :, 0] = sf.view(-1, 1)
     materials[env_ids_cpu, :, 1] = df.view(-1, 1)
@@ -572,6 +1080,10 @@ def adversary_receptive_object_material_from_action(
     df = torch.clamp(a[:, 13], dynamic_friction_range[0], dynamic_friction_range[1]).to("cpu")
     if make_consistent:
         df = torch.minimum(df, sf)
+    _adv_debug(
+        f"receptive material: n={len(env_ids_cpu)}, sf_mean={sf.mean().item():.4f}, df_mean={df.mean().item():.4f}",
+        env,
+    )
     materials = asset.root_physx_view.get_material_properties()
     materials[env_ids_cpu, :, 0] = sf.view(-1, 1)
     materials[env_ids_cpu, :, 1] = df.view(-1, 1)
@@ -591,6 +1103,7 @@ def adversary_insertive_object_mass_from_action(
     body_ids = torch.arange(asset.num_bodies, dtype=torch.int, device="cpu") if asset_cfg.body_ids == slice(None) else torch.tensor(asset_cfg.body_ids, dtype=torch.int, device="cpu")
     masses = asset.root_physx_view.get_masses()
     mass_value = torch.clamp(a[:, 11], mass_range[0], mass_range[1]).to("cpu")
+    _adv_debug(f"insertive mass: n={len(env_ids_cpu)}, mass_mean={mass_value.mean().item():.4f}", env)
     masses[env_ids_cpu[:, None], body_ids] = mass_value.view(-1, 1)
     masses = torch.clamp(masses, min=1e-6)
     asset.root_physx_view.set_masses(masses, env_ids_cpu)
@@ -616,6 +1129,7 @@ def adversary_receptive_object_mass_from_action(
     masses = asset.root_physx_view.get_masses()
     masses[env_ids_cpu[:, None], body_ids] = asset.data.default_mass[env_ids_cpu[:, None], body_ids].clone()
     mass_scale = torch.clamp(a[:, 14], mass_scale_range[0], mass_scale_range[1]).to("cpu")
+    _adv_debug(f"receptive mass: n={len(env_ids_cpu)}, mass_scale_mean={mass_scale.mean().item():.4f}", env)
     masses[env_ids_cpu[:, None], body_ids] *= mass_scale.view(-1, 1)
     masses = torch.clamp(masses, min=1e-6)
     asset.root_physx_view.set_masses(masses, env_ids_cpu)

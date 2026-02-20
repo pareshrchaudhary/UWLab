@@ -33,7 +33,6 @@ from uwlab_tasks.manager_based.manipulation.adversarial_env.config.ur5e_robotiq_
 
 from ... import mdp as task_mdp
 from ...mdp import events_adversary as adv_mdp
-from ...mdp.events_adversary import AdversaryControlledReset
 
 #########################################################
 # Base Scene Configuration
@@ -256,9 +255,9 @@ class BaseEventCfg:
     # mode: reset
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={}) # type: ignore
 
-    # Training Events: Adversary-controlled reset (grasp + partial assembly from datasets)
+    # Training Events: Adversary-controlled reset (4-mode: free/assembly x free-EE/grasped)
     reset_from_adversary = EventTerm(
-        func=AdversaryControlledReset,
+        func=adv_mdp.adversary_controlled_reset,
         mode="reset",
         params={
             "action_name": "adversaryaction",
@@ -271,11 +270,23 @@ class BaseEventCfg:
             "gripper_cfg": SceneEntityCfg("robot", joint_names=["finger_joint", ".*right.*", ".*left.*"]),
             "grasp_base_path": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/GraspSampling/ObjectPairs",
             "partial_assembly_base_path": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/PartialAssemblies/ObjectPairs",
-            "init_grasp_prob": 0.7,        # biased toward grasped (near-goal)
-            "init_assembly_prob": 0.8,     # biased toward partial assembly (near-goal)
-            "workspace_x_range": (0.3, 0.55),
-            "workspace_y_range": (-0.1, 0.3),
-            "workspace_z_range": (0.0, 0.3),
+            "rec_x_range": (0.30, 0.55),
+            "rec_y_range": (-0.10, 0.30),
+            "rec_yaw_range": (-15.0, 15.0),
+            "ins_x_range": (0.30, 0.55),
+            "ins_y_range": (-0.10, 0.50),
+            "ins_z_range": (0.00, 0.30),
+            "ee_x_range": (0.30, 0.70),
+            "ee_y_range": (-0.40, 0.40),
+            "ee_z_range": (0.00, 0.50),
+            "collision_num_points": 256,
+            "max_physics_retries": 3,
+            "physics_validation_steps": 50,
+            "consecutive_stability_steps": 5,
+            "max_object_pos_deviation": 0.025,
+            "max_robot_pos_deviation": 0.05,
+            "pos_z_threshold": -0.02,
+            "debug_print": True,
         },
     )
 
@@ -325,7 +336,7 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 27})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 25})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -377,7 +388,7 @@ class ObservationsCfg:
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 27})
+        prev_actions = ObsTerm(func=task_mdp.policy_last_action, params={"adversary_action_dim": 25})
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos) # type: ignore
 
@@ -488,7 +499,7 @@ class AdversaryObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Adversary policy input: standard normal noise."""
 
-        noise = ObsTerm(func=task_mdp.adversary_noise, params={"dim": 8})
+        noise = ObsTerm(func=task_mdp.adversary_noise, params={"dim": 25})  # match adversary action_dim
 
         def __post_init__(self):
             self.enable_corruption = False

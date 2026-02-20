@@ -14,7 +14,7 @@ from uwlab_tasks.manager_based.manipulation.reset_states.assembly_keypoints impo
 from uwlab_tasks.manager_based.manipulation.reset_states.mdp import utils
 
 
-def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = 19) -> torch.Tensor:
+def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = 25) -> torch.Tensor:
     """  
     For MARL environments where actions are [policy_actions | adversary_actions],
     this returns only the policy portion to ensure observation compatibility with
@@ -242,7 +242,7 @@ def time_left(env) -> torch.Tensor:
         life_left = torch.zeros(env.num_envs, device=env.device, dtype=torch.float)
     return life_left.view(-1, 1)
 
-def adversary_noise(env: ManagerBasedEnv, dim: int = 8) -> torch.Tensor:
-    """Standard normal noise for adversary policy input."""
+def adversary_noise(env: ManagerBasedEnv, dim: int = 25) -> torch.Tensor:
+    """Standard normal noise for adversary policy input (dim typically matches adversary action_dim)."""
 
     return torch.randn((env.num_envs, dim), device=env.device, dtype=torch.float)
