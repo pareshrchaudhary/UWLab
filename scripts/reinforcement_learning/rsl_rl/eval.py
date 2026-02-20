@@ -6,7 +6,7 @@
 """Eval script that processes all checkpoints from a finished training run.
 
 This script evaluates all checkpoints in a completed training run and logs
-metrics to the same W&B run (resumed).
+metrics either to the same W&B run (resumed) or to a new eval run.
 
 Usage:
     /isaac-sim/python.sh scripts/reinforcement_learning/rsl_rl/eval_watcher.py \
@@ -23,6 +23,7 @@ import glob
 import os
 import re
 import sys
+from datetime import datetime
 
 from isaaclab.app import AppLauncher
 
@@ -43,6 +44,12 @@ parser.add_argument(
     type=str,
     required=True,
     help="Path to the finished training run's log directory.",
+)
+parser.add_argument(
+    "--new_eval_run",
+    action="store_true",
+    default=False,
+    help="Create a new eval run directory and log there instead of resuming the original run.",
 )
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -67,6 +74,7 @@ import yaml
 from rsl_rl.runners import OnPolicyRunner
 
 from isaaclab.envs import DirectMARLEnv, DirectRLEnv, ManagerBasedRLEnv, ManagerBasedRLEnvCfg, DirectRLEnvCfg, DirectMARLEnvCfg
+from isaaclab.utils.io import dump_yaml
 from uwlab_tasks.utils.hydra import hydra_task_config
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
@@ -235,6 +243,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         return
     
     print(f"[EvalWatcher] Processing checkpoints in: {log_dir}")
+
+    # Resolve eval logging directory
+    eval_log_dir = log_dir
+    if args_cli.new_eval_run:
+        eval_log_root = os.path.dirname(log_dir)
+        eval_run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if agent_cfg.run_name:
+            eval_run_name += f"_{agent_cfg.run_name}"
+        eval_log_dir = os.path.join(eval_log_root, eval_run_name)
+        os.makedirs(eval_log_dir, exist_ok=False)
+        print(f"Exact experiment name requested from command line: {eval_run_name}")
+        print(f"[EvalWatcher] Logging eval metrics to new run directory: {eval_log_dir}")
+    else:
+        print("[EvalWatcher] Logging eval metrics to existing run.")
     
     # Get all checkpoints
     checkpoints = get_checkpoints(log_dir)
@@ -251,27 +273,36 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     wandb_run_id = None
     wandb_initialized = False
     
-    if wandb_project:
-        wandb_run_id = find_wandb_run_id(log_dir, project=wandb_project)
-    
-    # Initialize W&B (resume the training run)
-    if HAS_WANDB and wandb_project and wandb_run_id:
+    if HAS_WANDB and wandb_project:
         try:
-            wandb.init(
-                project=wandb_project,
-                id=wandb_run_id,
-                resume="allow",
-            )
-            wandb_initialized = True
-            print(f"[EvalWatcher] Resumed W&B run: {wandb_run_id}")
-            
-            # Define custom x-axis for eval metrics
-            wandb.define_metric("eval_iteration")
-            wandb.define_metric("eval/*", step_metric="eval_iteration")
+            if args_cli.new_eval_run:
+                wandb.init(
+                    project=wandb_project,
+                    name=os.path.basename(eval_log_dir),
+                    resume="never",
+                    dir=eval_log_dir,
+                )
+                wandb_initialized = True
+                print(f"[EvalWatcher] Started new W&B eval run: {os.path.basename(eval_log_dir)}")
+            else:
+                wandb_run_id = find_wandb_run_id(log_dir, project=wandb_project)
+                if wandb_run_id:
+                    wandb.init(
+                        project=wandb_project,
+                        id=wandb_run_id,
+                        resume="allow",
+                    )
+                    wandb_initialized = True
+                    print(f"[EvalWatcher] Resumed W&B run: {wandb_run_id}")
+                else:
+                    print("[EvalWatcher] Could not find W&B run ID, metrics will not be logged")
+
+            if wandb_initialized:
+                # Define custom x-axis for eval metrics
+                wandb.define_metric("eval_iteration")
+                wandb.define_metric("eval/*", step_metric="eval_iteration")
         except Exception as e:
             print(f"[EvalWatcher] Failed to init W&B: {e}")
-    elif HAS_WANDB and wandb_project:
-        print("[EvalWatcher] Could not find W&B run ID, metrics will not be logged")
     
     # Set up environment config
     ENVS_PER_VARIANT = 100
@@ -283,7 +314,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
-    env_cfg.log_dir = log_dir
+    env_cfg.log_dir = eval_log_dir
     
     # Calculate eval steps (1 episode length)
     eval_steps = args_cli.steps
@@ -315,7 +346,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     
     # Create runner for loading checkpoints
     device = env_cfg.sim.device
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=device)
+    runner_log_dir = eval_log_dir if args_cli.new_eval_run else None
+    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=runner_log_dir, device=device)
+
+    # Save configs for reproducibility when creating a new eval run
+    if args_cli.new_eval_run:
+        dump_yaml(os.path.join(eval_log_dir, "params", "env.yaml"), env_cfg)
+        dump_yaml(os.path.join(eval_log_dir, "params", "agent.yaml"), agent_cfg)
     
     # Process each checkpoint
     for iteration, checkpoint_path in checkpoints:
