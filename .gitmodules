@@ -1,3 +1,7 @@
 [submodule "rsl_rl"]
 	path = rsl_rl
 	url = https://github.com/pareshrchaudhary/rsl_rl.git
+[submodule "diffusion_policy"]
+	path = diffusion_policy
+	url = https://github.com/pareshrchaudhary/diffusion_policy.git
+	branch = pat/distillation

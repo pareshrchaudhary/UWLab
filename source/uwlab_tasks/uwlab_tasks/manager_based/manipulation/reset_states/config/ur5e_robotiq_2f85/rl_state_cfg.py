@@ -43,7 +43,7 @@ class RlStateSceneCfg(InteractiveSceneCfg):
     insertive_object: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/InsertiveObject",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{UWLAB_CLOUD_ASSETS_DIR}/Props/Custom/Peg/peg.usd",
+            usd_path=f"{UWLAB_CLOUD_ASSETS_DIR}/Props/FurnitureBench/SquareLeg/square_leg.usd",
             scale=(1, 1, 1),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4,
@@ -59,7 +59,7 @@ class RlStateSceneCfg(InteractiveSceneCfg):
     receptive_object: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/ReceptiveObject",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{UWLAB_CLOUD_ASSETS_DIR}/Props/Custom/PegHole/peg_hole.usd",
+            usd_path=f"{UWLAB_CLOUD_ASSETS_DIR}/Props/FurnitureBench/SquareTableTop/square_table_top.usd",
             scale=(1, 1, 1),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=4,
@@ -500,15 +500,6 @@ class RewardsCfg:
 
     dense_success_reward = RewTerm(func=task_mdp.dense_success_reward, weight=0.1, params={"std": 1.0})
 
-    # object_lifted = RewTerm(
-    #     func=task_mdp.object_height_above_threshold,
-    #     weight=0.1,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("insertive_object"),
-    #         "threshold_height": 0.02,
-    #     },
-    # )
-
     success_reward = RewTerm(func=task_mdp.success_reward, weight=1.0)
 
 
@@ -695,205 +686,6 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfg(Ur5eRobotiq2f85RlStateCfg):
             },
         )
 
-
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV0(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
-    """Eval Variant 0: In-Dstribution OSC gains: In-Distribution Parameters"""
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_operational_space_controller_gains,
-            mode="reset",
-            params={
-                "action_name": "arm",
-                "stiffness_distribution_params": (0.7, 1.3),
-                "damping_distribution_params": (0.9, 1.1),
-                "operation": "scale",
-                "distribution": "uniform",
-            },
-        )
-        self.events.reset_from_reset_states = EventTerm(
-            func=task_mdp.MultiResetManager,
-            mode="reset",
-            params={
-                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEAnywhere"],
-                "probs": [1.0],
-                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-            },
-        )
-
-
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
-    """Eval Variant 1: Out-of-Distribution OSC gains: In-Distribution Parameters"""
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_operational_space_controller_gains,
-            mode="reset",
-            params={
-                "action_name": "arm",
-                "stiffness_distribution_params": (0.5, 2.4),
-                "damping_distribution_params": (0.5, 1.6),
-                "operation": "scale",
-                "distribution": "uniform",
-            },
-        )
-        self.events.reset_from_reset_states = EventTerm(
-            func=task_mdp.MultiResetManager,
-            mode="reset",
-            params={
-                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEAnywhere"],
-                "probs": [1.0],
-                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-            },
-        )
-
-
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
-    """Eval Variant 2: In-Distribution OSC gains: Out-of-Distribution Parameters"""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self.events.robot_material = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_rigid_body_material,
-            mode="startup",
-            params={
-                "static_friction_range": (0.2, 1.8),
-                "dynamic_friction_range": (0.2, 1.8),
-                "restitution_range": (0.0, 0.0),
-                "num_buckets": 256,
-                "asset_cfg": SceneEntityCfg("robot"),
-                "make_consistent": True,
-            },
-        )
-        self.events.randomize_robot_mass = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_rigid_body_mass,
-            mode="startup",
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "mass_distribution_params": (0.2, 1.8),
-                "operation": "scale",
-                "distribution": "uniform",
-                "recompute_inertia": True,
-            },
-        )
-        self.events.randomize_robot_joint_parameters = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_joint_parameters,
-            mode="reset",
-            params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*", "finger_joint"]),
-                "friction_distribution_params": (0.1, 5.0),
-                "armature_distribution_params": (0.1, 5.0),
-                "operation": "scale",
-                "distribution": "log_uniform",
-            },
-        )
-        self.events.randomize_gripper_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_actuator_gains,
-            mode="reset",
-            params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
-                "stiffness_distribution_params": (0.2, 2.8),
-                "damping_distribution_params": (0.2, 2.8),
-                "operation": "scale",
-                "distribution": "log_uniform",
-            },
-        )
-        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_operational_space_controller_gains,
-            mode="reset",
-            params={
-                "action_name": "arm",
-                "stiffness_distribution_params": (0.7, 1.3),
-                "damping_distribution_params": (0.9, 1.1),
-                "operation": "scale",
-                "distribution": "uniform",
-            },
-        )
-        self.events.reset_from_reset_states = EventTerm(
-            func=task_mdp.MultiResetManager,
-            mode="reset",
-            params={
-                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEAnywhere"],
-                "probs": [1.0],
-                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-            },
-        )
-
-
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3(Ur5eRobotiq2f85RelCartesianOSCEvalCfg):
-    """Eval Variant 3: Out-of-Distribution Object Parameters"""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self.events.insertive_object_material = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_rigid_body_material,
-            mode="startup",
-            params={
-                "static_friction_range": (0.6, 1.4),
-                "dynamic_friction_range": (0.6, 1.4),
-                "restitution_range": (0.0, 0.0),
-                "num_buckets": 256,
-                "asset_cfg": SceneEntityCfg("insertive_object"),
-                "make_consistent": True,
-            },
-        )
-        self.events.randomize_insertive_object_mass = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_rigid_body_mass,
-            mode="startup",
-            params={
-                "asset_cfg": SceneEntityCfg("insertive_object"),
-                "mass_distribution_params": (0.02, 0.4),
-                "operation": "abs",
-                "distribution": "uniform",
-                "recompute_inertia": True,
-            },
-        )
-        self.events.receptive_object_material = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_rigid_body_material,
-            mode="startup",
-            params={
-                "static_friction_range": (0.6, 1.2),
-                "dynamic_friction_range": (0.6, 1.2),
-                "restitution_range": (0.0, 0.0),
-                "num_buckets": 256,
-                "asset_cfg": SceneEntityCfg("receptive_object"),
-                "make_consistent": True,
-            },
-        )
-        self.events.randomize_robot_actuator_parameters = EventTerm(  # type: ignore[attr-defined]
-            func=task_mdp.randomize_operational_space_controller_gains,
-            mode="reset",
-            params={
-                "action_name": "arm",
-                "stiffness_distribution_params": (0.7, 1.3),
-                "damping_distribution_params": (0.9, 1.1),
-                "operation": "scale",
-                "distribution": "uniform",
-            },
-        )
-        self.events.reset_from_reset_states = EventTerm(
-            func=task_mdp.MultiResetManager,
-            mode="reset",
-            params={
-                "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEAnywhere"],
-                "probs": [1.0],
-                "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-            },
-        )
-
-
-EVAL_VARIANTS = [
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV0,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3,
-]
 
 
 @configclass

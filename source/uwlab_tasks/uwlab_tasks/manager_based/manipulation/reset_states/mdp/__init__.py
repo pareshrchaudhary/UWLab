@@ -14,3 +14,4 @@ from .recorders import *
 from .rewards import *
 from .terminations import *
 from .utils import *
+from .eval import NUM_EVAL_VARIANTS, apply_multi_eval_events, PerEnvMultiResetManager
