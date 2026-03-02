@@ -42,7 +42,8 @@ docker/.container.cfg
 **/.neptune/*
 docker/artifacts/
 *.tmp
-${data}/**
+${data}/
+distillation_method/
 
 # Doc Outputs
 **/docs/_build/*

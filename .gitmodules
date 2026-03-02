@@ -5,3 +5,6 @@
 	path = diffusion_policy
 	url = https://github.com/pareshrchaudhary/diffusion_policy.git
 	branch = pat/distillation
+[submodule "openpi"]
+	path = openpi
+	url = https://github.com/pareshrchaudhary/openpi.git

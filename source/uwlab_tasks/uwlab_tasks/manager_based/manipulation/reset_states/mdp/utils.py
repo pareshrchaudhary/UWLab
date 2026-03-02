@@ -334,3 +334,42 @@ def compute_assembly_hash(*usd_paths: str) -> str:
 
     full_hash = hashlib.md5(combined.encode()).hexdigest()
     return full_hash
+
+
+def load_asset_paths_from_config(
+    config_path: str,
+    cache_subdir: str = "assets",
+    skip_validation: bool = False,
+) -> list[str]:
+    """Load asset paths from a YAML config file.
+
+    The YAML file should have a ``cloud:`` key with a list of relative paths.
+    These are resolved against ``UWLAB_CLOUD_ASSETS_DIR``.
+
+    Args:
+        config_path: Path to the YAML config file.
+        cache_subdir: Subdirectory hint (unused, kept for API compatibility).
+        skip_validation: If True, skip existence checks on resolved paths.
+
+    Returns:
+        List of resolved absolute asset paths.
+    """
+    from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR
+
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    paths = []
+    for relative_path in config.get("cloud", []):
+        full_path = os.path.join(UWLAB_CLOUD_ASSETS_DIR, relative_path)
+        paths.append(full_path)
+
+    if not skip_validation:
+        missing = [p for p in paths if not os.path.exists(p)]
+        if missing:
+            logging.warning(
+                f"[load_asset_paths_from_config] {len(missing)}/{len(paths)} paths missing on disk. "
+                f"First 3: {missing[:3]}"
+            )
+
+    return paths

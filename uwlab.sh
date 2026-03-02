@@ -627,6 +627,10 @@ while [[ $# -gt 0 ]]; do
             ${pip_command} --no-cache-dir --force-reinstall --no-deps -e "${rsl_rl_root}"
             echo "[INFO] Verified: rsl-rl-lib installed in editable mode from ${rsl_rl_root}."
 
+            # install zarr v2 for diffusion_policy dataset compatibility
+            echo "[INFO] Installing zarr<3 for diffusion_policy compatibility..."
+            ${pip_command} "zarr<3"
+
             # in some rare cases, torch might not be installed properly by setup.py, add one more check here
             # can prevent that from happening
             ensure_cuda_torch

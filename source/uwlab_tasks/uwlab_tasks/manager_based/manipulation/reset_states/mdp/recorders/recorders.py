@@ -23,6 +23,13 @@ class StableStateRecorder(RecorderTerm):
         return "initial_state", extract_env_ids_values(self._env.scene.get_state(is_relative=True))
 
 
+class PreStepDataCollectionObservationsRecorder(RecorderTerm):
+    """Recorder term that records the data_collection obs group before each step."""
+
+    def record_pre_step(self):
+        return "obs", self._env.obs_buf["data_collection"]
+
+
 class GraspRelativePoseRecorder(RecorderTerm):
     """Recorder term that records relative position, orientation, and gripper joint states for grasp evaluation."""
 

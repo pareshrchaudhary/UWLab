@@ -5,6 +5,11 @@
 
 from dataclasses import MISSING
 
+from isaaclab.envs.mdp.recorders.recorders_cfg import (
+    InitialStateRecorderCfg,
+    PostStepStatesRecorderCfg,
+    PreStepActionsRecorderCfg,
+)
 from isaaclab.managers.recorder_manager import RecorderManagerBaseCfg, RecorderTerm, RecorderTermCfg
 from isaaclab.utils import configclass
 
@@ -63,3 +68,20 @@ class GraspRelativePoseRecorderManagerCfg(RecorderManagerBaseCfg):
             object_name=object_name,
             gripper_body_name=gripper_body_name,
         )
+
+
+@configclass
+class PreStepDataCollectionObservationsRecorderCfg(RecorderTermCfg):
+    """Configuration for the data_collection obs group recorder term."""
+
+    class_type: type[RecorderTerm] = recorders.PreStepDataCollectionObservationsRecorder
+
+
+@configclass
+class ActionStateRecorderManagerCfg(RecorderManagerBaseCfg):
+    """Recorder for RGB data collection: initial state, post-step states, actions, and data_collection obs."""
+
+    record_initial_state = InitialStateRecorderCfg()
+    record_post_step_states = PostStepStatesRecorderCfg()
+    record_pre_step_actions = PreStepActionsRecorderCfg()
+    record_pre_step_data_collection_observations = PreStepDataCollectionObservationsRecorderCfg()
