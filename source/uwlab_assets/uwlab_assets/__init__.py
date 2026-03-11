@@ -16,5 +16,7 @@ UWLAB_ASSETS_DATA_DIR = os.path.join(UWLAB_ASSETS_EXT_DIR, "data")
 UWLAB_ASSETS_METADATA = toml.load(os.path.join(UWLAB_ASSETS_EXT_DIR, "config", "extension.toml"))
 """Extension metadata dictionary parsed from the extension.toml file."""
 UWLAB_CLOUD_ASSETS_DIR = "https://uwlab-assets.s3.us-west-004.backblazeb2.com"
+NVIDIA_CLOUD_ASSETS_DIR = "https://omniverse-content-production.s3-us-west-2.amazonaws.com"
+"""Fallback URL for NVIDIA Isaac Sim public assets not on the UWLab bucket."""
 # Configure the module-level variables
 __version__ = UWLAB_ASSETS_METADATA["package"]["version"]

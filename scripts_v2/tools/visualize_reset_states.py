@@ -41,7 +41,7 @@ import gymnasium as gym
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.managers import EventTermCfg as EventTerm
 
-from uwlab_tasks.manager_based.manipulation.reset_states.mdp import events as task_mdp
+from uwlab_tasks.manager_based.manipulation.assembly_task.common.mdp import events as task_mdp
 from uwlab_tasks.utils.hydra import hydra_task_compose
 
 torch.backends.cuda.matmul.allow_tf32 = True

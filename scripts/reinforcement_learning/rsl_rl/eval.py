@@ -63,7 +63,7 @@ from uwlab_tasks.utils.hydra import hydra_task_config
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
 # Import eval variants setup
-from uwlab_tasks.manager_based.manipulation.reset_states.mdp.eval import (
+from uwlab_tasks.manager_based.manipulation.assembly_task.omnireset.mdp.eval import (
     NUM_EVAL_VARIANTS,
     apply_multi_eval_events,
 )

@@ -50,7 +50,7 @@ from isaaclab.managers.recorder_manager import DatasetExportMode
 from uwlab.utils.datasets.torch_dataset_file_handler import TorchDatasetFileHandler
 
 import uwlab_tasks  # noqa: F401
-import uwlab_tasks.manager_based.manipulation.reset_states.mdp as task_mdp
+import uwlab_tasks.manager_based.manipulation.assembly_task.common.mdp as task_mdp
 from uwlab_tasks.utils.hydra import hydra_task_compose
 
 torch.backends.cuda.matmul.allow_tf32 = True

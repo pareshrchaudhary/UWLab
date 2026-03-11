@@ -3,5 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+from .lerobot_dataset_file_handler import LeRobotDatasetFileHandler
 from .torch_dataset_file_handler import TorchDatasetFileHandler
 from .zarr_dataset_file_handler import ZarrDatasetFileHandler

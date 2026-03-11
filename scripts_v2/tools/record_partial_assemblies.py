@@ -49,7 +49,7 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab.envs import ManagerBasedRLEnv
 
 import uwlab_tasks  # noqa: F401
-from uwlab_tasks.manager_based.manipulation.reset_states.mdp.utils import compute_assembly_hash
+from uwlab_tasks.manager_based.manipulation.assembly_task.common.mdp.utils import compute_assembly_hash
 from uwlab_tasks.utils.hydra import hydra_task_compose
 
 torch.backends.cuda.matmul.allow_tf32 = True

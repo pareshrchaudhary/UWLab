@@ -44,6 +44,7 @@ docker/artifacts/
 *.tmp
 ${data}/
 distillation_method/
+resources/
 
 # Doc Outputs
 **/docs/_build/*
