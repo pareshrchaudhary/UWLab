@@ -6,5 +6,4 @@
 
 from uwlab_tasks.manager_based.manipulation.assembly_task.common.mdp import *  # noqa: F401,F403
 from uwlab_tasks.manager_based.manipulation.assembly_task.common.vision import *  # noqa: F401,F403
-from .events import *  # noqa: F401,F403
 from .eval import *  # noqa: F401,F403

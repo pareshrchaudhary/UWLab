@@ -24,7 +24,6 @@ from uwlab_assets.robots.ur5e_robotiq_gripper import EXPLICIT_UR5E_ROBOTIQ_2F85
 from .actions import Ur5eRobotiq2f85RelativeOSCAction
 
 from ... import mdp as task_mdp
-from uwlab_tasks.manager_based.manipulation.assembly_task.omnireset.mdp.events import MultiResetManager
 
 
 @configclass
@@ -232,7 +231,7 @@ class ObjectAnywhereEEAnywhereEventCfg(ResetStatesBaseEventCfg):
 @configclass
 class ObjectRestingEEGraspedEventCfg(ResetStatesBaseEventCfg):
     reset_insertive_object_pose_from_reset_states = EventTerm(
-        func=MultiResetManager,
+        func=task_mdp.MultiResetManager,
         mode="reset",
         params={
             "base_paths": [f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/Resets/ObjectPairs/ObjectAnywhereEEAnywhere"],

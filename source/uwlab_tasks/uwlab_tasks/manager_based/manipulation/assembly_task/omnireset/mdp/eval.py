@@ -15,9 +15,8 @@ from isaaclab.envs import ManagerBasedEnv
 from isaaclab.managers import EventTermCfg as EventTerm, ManagerTermBase
 
 from uwlab_tasks.manager_based.manipulation.assembly_task.common.mdp import events as task_mdp_events
+from uwlab_tasks.manager_based.manipulation.assembly_task.common.mdp.events import MultiResetManager
 from uwlab_tasks.manager_based.manipulation.assembly_task.common.mdp.utils import sample_from_nested_dict
-
-from .events import MultiResetManager
 
 from ..config.ur5e_robotiq_2f85.eval_cfg import EVAL_VARIANTS
 
