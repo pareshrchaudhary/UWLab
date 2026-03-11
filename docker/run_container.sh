@@ -40,7 +40,7 @@ touch ${SCRIPT_DIR}/.uw-lab-docker-history
 #   bash --noprofile --norc
 
 
-apptainer exec --nv --writable-tmpfs \
+NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-0}" apptainer exec --nv --writable-tmpfs \
   --bind ${UW_BASE}/isaac-cache-kit:/isaac-sim/kit/cache \
   --bind ${UW_BASE}/isaac-cache-ov:/root/.cache/ov \
   --bind ${UW_BASE}/isaac-cache-pip:/root/.cache/pip \

@@ -29,7 +29,7 @@ class Base_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 40000
     save_interval = 100
     resume = False
-    experiment_name = "ur5e_robotiq_2f85_reset_states_agent"
+    experiment_name = "omnireset_leg_tabletop"
     policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -62,7 +62,7 @@ class Base_PPORecurrentRunnerCfg(RslRlOnPolicyRecurrentRunnerCfg):
     max_iterations = 40000
     save_interval = 100
     resume = False
-    experiment_name = "ur5e_robotiq_2f85_reset_states_recurrent_agent"
+    experiment_name = "omnireset_leg_tabletop_recurrent_agent"
     policy = RslRlAsymmetricActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -99,7 +99,7 @@ class Base_PPOFullRecurrentRunnerCfg(RslRlOnPolicyFullRecurrentRunnerCfg):
     max_iterations = 40000
     save_interval = 100
     resume = False
-    experiment_name = "ur5e_robotiq_2f85_reset_states_full_recurrent_agent"
+    experiment_name = "omnireset_leg_tabletop_full_recurrent_agent"
     policy = RslRLFancyActorCriticRecurrentCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,

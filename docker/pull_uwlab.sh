@@ -12,5 +12,5 @@ mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
 mkdir -p "$PROJECT_ROOT/UWLab/uwlab_docker"
 
 echo "Using cache directory: $APPTAINER_CACHEDIR"
-apptainer pull "$PROJECT_ROOT/UWLab/uwlab_docker/uw-lab_latest.sif" docker://pareshrchaudhary/uwlab:latest
+apptainer pull --force "$PROJECT_ROOT/UWLab/uwlab_docker/uw-lab_latest.sif" docker://pareshrchaudhary/uwlab:latest
 

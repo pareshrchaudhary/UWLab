@@ -22,7 +22,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
     adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
-    experiment_name = "ur5e_robotiq_2f85_adversarial"
+    experiment_name = "cage_leg_tabletop"
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
@@ -90,7 +90,7 @@ class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
     adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
-    experiment_name = "ur5e_robotiq_2f85_adversarial_recurrent"
+    experiment_name = "cage_leg_tabletop_recurrent"
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
@@ -162,7 +162,7 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
     adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
-    experiment_name = "ur5e_robotiq_2f85_adversarial_full_recurrent"
+    experiment_name = "cage_leg_tabletop_full_recurrent"
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
