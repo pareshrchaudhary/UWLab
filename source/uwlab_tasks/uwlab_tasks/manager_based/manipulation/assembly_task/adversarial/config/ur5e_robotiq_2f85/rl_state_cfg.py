@@ -52,8 +52,8 @@ class BaseEventCfg:
         params={
             "action_name": "adversaryaction",
             "asset_cfg": SceneEntityCfg("robot"),
-            "static_friction_range": (0.3, 2.0),
-            "dynamic_friction_range": (0.2, 2.0),
+            "static_friction_range": (0.3, 1.2),
+            "dynamic_friction_range": (0.2, 1.0),
             "num_buckets": 256,
             "make_consistent": True,
         },
@@ -110,6 +110,7 @@ class BaseEventCfg:
             "make_consistent": True,
         },
     )
+
     randomize_insertive_object_mass = EventTerm(
         func=task_mdp.randomize_rigid_body_mass,
         mode="startup",
@@ -137,6 +138,7 @@ class BaseEventCfg:
             "make_consistent": True,
         },
     )
+    
     randomize_receptive_object_mass = EventTerm(
         func=task_mdp.randomize_rigid_body_mass,
         mode="startup",
