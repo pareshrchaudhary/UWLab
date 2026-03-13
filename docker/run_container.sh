@@ -56,6 +56,7 @@ NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-0}" apptainer exec --nv --writ
   --bind ${UWLAB_ROOT}/docs:/workspace/uwlab/docs \
   --bind ${UWLAB_ROOT}/tools:/workspace/uwlab/tools \
   --bind ${UWLAB_ROOT}/rsl_rl:/workspace/uwlab/rsl_rl \
+  --bind ${UWLAB_ROOT}/datasets:/workspace/uwlab/datasets \
   --bind ${UW_BASE}/uw-lab-docs:/workspace/uwlab/docs/_build \
   --bind ${UW_BASE}/uw-lab-logs:/workspace/uwlab/logs \
   --bind ${UW_BASE}/uw-lab-data:/workspace/uwlab/data_storage \
