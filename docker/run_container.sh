@@ -19,7 +19,8 @@ mkdir -p ${UW_BASE}/isaac-cache-kit \
          ${UW_BASE}/uw-lab-docs \
          ${UW_BASE}/uw-lab-logs \
          ${UW_BASE}/uw-lab-data \
-         ${UW_BASE}/outputs
+         ${UW_BASE}/outputs \
+         ${UWLAB_ROOT}/datasets
 
 # Create bash history file if it doesn't exist
 touch ${SCRIPT_DIR}/.uw-lab-docker-history
