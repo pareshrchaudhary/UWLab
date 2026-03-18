@@ -159,9 +159,10 @@ class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
-    adversary_initial_reset_probs: list[float] | None = None
-    """Initial reset-state probabilities for adversary output logits.
-    """
+    adversary_robot_parameters: int = MISSING  # type: ignore
+    """Number of robot domain randomization parameters (indices 0 to N-1)."""
+    adversary_initial_reset_probs: list[float] = MISSING  # type: ignore
+    """Initial reset-state probabilities for adversary output logits (indices N to N+len-1)."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
@@ -196,8 +197,10 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
-    adversary_initial_reset_probs: list[float] | None = None
-    """Initial reset-state probabilities for adversary output logits (indices 15-18). If set, last-layer bias is init so softmax ~ these probs."""
+    adversary_robot_parameters: int = MISSING  # type: ignore
+    """Number of robot domain randomization parameters (indices 0 to N-1)."""
+    adversary_initial_reset_probs: list[float] = MISSING  # type: ignore
+    """Initial reset-state probabilities for adversary output logits (indices N to N+len-1)."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
