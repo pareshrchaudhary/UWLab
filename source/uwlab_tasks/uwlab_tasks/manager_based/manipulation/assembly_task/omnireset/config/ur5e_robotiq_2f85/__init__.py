@@ -121,7 +121,7 @@ gym.register(
 )
 
 gym.register(
-    id="OmniReset-RGB-Eval-OOD-OSC",
+    id="OmniReset-Eval-RGB-OOD-OSC",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -131,7 +131,7 @@ gym.register(
 )
 
 gym.register(
-    id="OmniReset-RGB-Eval-OOD-Robot",
+    id="OmniReset-Eval-RGB-OOD-Robot",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -141,7 +141,7 @@ gym.register(
 )
 
 gym.register(
-    id="OmniReset-RGB-Eval-OOD-Object",
+    id="OmniReset-Eval-RGB-OOD-Object",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -151,7 +151,7 @@ gym.register(
 )
 
 gym.register(
-    id="OmniReset-RGB-Eval-OOD-All",
+    id="OmniReset-Eval-RGB-OOD-All",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -177,6 +177,16 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.data_collection_rgb_cfg:Ur5eRobotiq2f85EvalRGBRelCartesianOSCOODCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+
+gym.register(
+    id="OmniReset-Eval-OOD-RGB-OOD-All",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_rgb_cfg:OODRGBOODAllCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
     },
 )
