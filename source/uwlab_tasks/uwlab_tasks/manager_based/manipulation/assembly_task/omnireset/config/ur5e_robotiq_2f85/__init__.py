@@ -111,7 +111,7 @@ gym.register(
 )
 
 gym.register(
-    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-RGB-Play-v0",
+    id="OmniReset-Eval-RGB",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -172,7 +172,7 @@ gym.register(
 )
 
 gym.register(
-    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-RGB-OOD-Play-v0",
+    id="OmniReset-Eval-OOD-RGB",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={

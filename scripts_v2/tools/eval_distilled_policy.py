@@ -23,6 +23,12 @@ parser.add_argument("--num_trajectories", type=int, default=100, help="Number of
 parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
 parser.add_argument("--use_amp", action="store_true", default=False, help="Use automatic mixed precision.")
 parser.add_argument("--save_video", action="store_true", default=False, help="Save video of the policy.")
+parser.add_argument(
+    "--eval_summary_log",
+    type=str,
+    default=None,
+    help="If set, append task name, final statistics, and average metrics (same text as printed at end) to this file.",
+)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -249,23 +255,30 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg, agent_cfg):
                     success_rate = (successful_episodes / episodes * 100) if episodes > 0 else 0.0
                     pbar.set_description(f"Evaluating trajectories (Success: {success_rate:.2f}%)")
 
-    # Print final statistics
-    print("\nFinal Statistics:")
-    print(f"Total trajectories evaluated: {episodes}")
+    # Final statistics and average metrics (stdout + optional append-only log)
+    summary_lines: list[str] = ["", f"Task: {args_cli.task}", "Final Statistics:"]
+    summary_lines.append(f"Total trajectories evaluated: {episodes}")
     if successful_episodes > 0 or "Episode_Termination/success" in episode_metrics:
-        print(f"Successful trajectories: {successful_episodes}")
-        print(f"Success rate: {successful_episodes/episodes*100:.2f}%")
+        summary_lines.append(f"Successful trajectories: {successful_episodes}")
+        summary_lines.append(f"Success rate: {successful_episodes/episodes*100:.2f}%")
     else:
-        print("Success rate: Not calculable (success metric not found in environment)")
+        summary_lines.append("Success rate: Not calculable (success metric not found in environment)")
 
-    # Print metrics statistics
     if episode_metrics:
-        print("\nAverage Metrics:")
+        summary_lines.append("")
+        summary_lines.append("Average Metrics:")
         for metric_name, values in sorted(episode_metrics.items()):
-            if values:  # Only print if we have values
+            if values:
                 values = [float(v) if isinstance(v, torch.Tensor) else v for v in values]
                 mean = sum(values) / len(values)
-                print(f"{metric_name}: {mean:.4f}")
+                summary_lines.append(f"{metric_name}: {mean:.4f}")
+
+    summary_text = "\n".join(summary_lines) + "\n"
+    print(summary_text, end="")
+
+    if args_cli.eval_summary_log:
+        with open(args_cli.eval_summary_log, "a", encoding="utf-8") as f:
+            f.write(summary_text)
 
     # Cleanup
     if pbar is not None:

@@ -104,8 +104,6 @@ def run_eval_rollout(env, policy, policy_nn, num_steps, device, num_variants, en
     episode_rewards = torch.zeros(env.num_envs, device=device)
     variant_ep_count = torch.zeros(num_variants, device=device)
     variant_rew_sum = torch.zeros(num_variants, device=device)
-    variant_rew_min = torch.full((num_variants,), float('inf'), device=device)
-    variant_rew_max = torch.full((num_variants,), float('-inf'), device=device)
 
     if hasattr(policy_nn, "reset"):
         policy_nn.reset()
@@ -123,8 +121,6 @@ def run_eval_rollout(env, policy, policy_nn, num_steps, device, num_variants, en
                 ep_rew = episode_rewards[eid]
                 variant_rew_sum[vid] += ep_rew
                 variant_ep_count[vid] += 1
-                variant_rew_min[vid] = torch.min(variant_rew_min[vid], ep_rew)
-                variant_rew_max[vid] = torch.max(variant_rew_max[vid], ep_rew)
         episode_rewards[done_ids] = 0
 
         if hasattr(policy_nn, "reset"):
@@ -134,8 +130,6 @@ def run_eval_rollout(env, policy, policy_nn, num_steps, device, num_variants, en
     for vid in range(num_variants):
         if variant_ep_count[vid] > 0:
             stats[f"eval/variant_{vid}/mean_reward"] = (variant_rew_sum[vid] / variant_ep_count[vid]).item()
-            stats[f"eval/variant_{vid}/min_reward"] = variant_rew_min[vid].item()
-            stats[f"eval/variant_{vid}/max_reward"] = variant_rew_max[vid].item()
     return stats
 
 
@@ -227,13 +221,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         policy = runner.get_inference_policy(device=device)
         policy_nn = runner.alg.policy
-        policy_nn = runner.alg.actor_critic
 
         stats = run_eval_rollout(env, policy, policy_nn, eval_steps, device, NUM_EVAL_VARIANTS, envs_per_variant)
 
         print(f"[Eval] Iteration {iteration}:")
-        for key, value in stats.items():
-            print(f"  {key}: {value:.3f}" if isinstance(value, float) else f"  {key}: {value}")
+        for vid in range(NUM_EVAL_VARIANTS):
+            key = f"eval/variant_{vid}/mean_reward"
+            if key in stats:
+                print(f"  variant {vid}: mean_reward = {stats[key]:.3f}")
+            else:
+                print(f"  variant {vid}: mean_reward = (no completed episodes)")
 
         if wandb_initialized:
             try:
