@@ -51,8 +51,8 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1(Ur5eRobotiq2f85RelCartesianOSCEval
             mode="reset",
             params={
                 "action_name": "arm",
-                "stiffness_distribution_params": (0.5, 2.4),
-                "damping_distribution_params": (0.5, 1.6),
+                "stiffness_distribution_params": (0.2, 2.4),
+                "damping_distribution_params": (0.2, 1.8),
                 "operation": "scale",
                 "distribution": "uniform",
             },
@@ -78,8 +78,8 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2(Ur5eRobotiq2f85RelCartesianOSCEval
             func=task_mdp.randomize_rigid_body_material,
             mode="startup",
             params={
-                "static_friction_range": (0.2, 1.8),
-                "dynamic_friction_range": (0.2, 1.8),
+                "static_friction_range": (0.2, 2.4),
+                "dynamic_friction_range": (0.2, 2.4),
                 "restitution_range": (0.0, 0.0),
                 "num_buckets": 256,
                 "asset_cfg": SceneEntityCfg("robot"),
@@ -91,7 +91,7 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2(Ur5eRobotiq2f85RelCartesianOSCEval
             mode="startup",
             params={
                 "asset_cfg": SceneEntityCfg("robot"),
-                "mass_distribution_params": (0.2, 1.8),
+                "mass_distribution_params": (0.2, 2.4),
                 "operation": "scale",
                 "distribution": "uniform",
                 "recompute_inertia": True,
@@ -151,8 +151,8 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3(Ur5eRobotiq2f85RelCartesianOSCEval
             func=task_mdp.randomize_rigid_body_material,
             mode="startup",
             params={
-                "static_friction_range": (0.6, 1.4),
-                "dynamic_friction_range": (0.6, 1.4),
+                "static_friction_range": (0.2, 2.8),
+                "dynamic_friction_range": (0.2, 2.8),
                 "restitution_range": (0.0, 0.0),
                 "num_buckets": 256,
                 "asset_cfg": SceneEntityCfg("insertive_object"),
@@ -164,7 +164,7 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3(Ur5eRobotiq2f85RelCartesianOSCEval
             mode="startup",
             params={
                 "asset_cfg": SceneEntityCfg("insertive_object"),
-                "mass_distribution_params": (0.02, 0.4),
+                "mass_distribution_params": (0.02, 0.6),
                 "operation": "abs",
                 "distribution": "uniform",
                 "recompute_inertia": True,
@@ -174,8 +174,8 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3(Ur5eRobotiq2f85RelCartesianOSCEval
             func=task_mdp.randomize_rigid_body_material,
             mode="startup",
             params={
-                "static_friction_range": (0.6, 1.2),
-                "dynamic_friction_range": (0.6, 1.2),
+                "static_friction_range": (0.2, 2.8),
+                "dynamic_friction_range": (0.2, 2.8),
                 "restitution_range": (0.0, 0.0),
                 "num_buckets": 256,
                 "asset_cfg": SceneEntityCfg("receptive_object"),
