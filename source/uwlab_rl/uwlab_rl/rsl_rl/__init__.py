@@ -7,6 +7,7 @@ from .exporter import export_policy_as_jit, export_policy_as_onnx
 from .rl_cfg import (
     BehaviorCloningCfg,
     OffPolicyAlgorithmCfg,
+    RslRlBCImageActorCriticCfg,
     RslRlFancyActorCriticCfg,
     RslRlFancyPpoAlgorithmCfg,
     RslRlAsymmetricActorCriticCfg,

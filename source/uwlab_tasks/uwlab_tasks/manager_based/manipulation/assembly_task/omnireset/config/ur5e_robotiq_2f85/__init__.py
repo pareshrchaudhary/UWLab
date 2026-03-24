@@ -96,6 +96,20 @@ gym.register(
 
 
 #########################################################
+# BC-PPO RGB Fine-Tuning Environments
+#########################################################
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-BCPPO-RGB-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.bc_ppo_rgb_cfg:Ur5eRobotiq2f85BCPPORGBCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_BCPPORunnerCfg",
+    },
+)
+
+
+#########################################################
 # RGB Data Collection and Evaluation Environments
 #########################################################
 

@@ -10,6 +10,7 @@ from uwlab_rl.rsl_rl import (  # noqa: F401
     BehaviorCloningCfg,
     OffPolicyAlgorithmCfg,
     RslRlAsymmetricActorCriticCfg,
+    RslRlBCImageActorCriticCfg,
     RslRlFancyActorCriticCfg,
     RslRlFancyPpoAlgorithmCfg,
     RslRlOnPolicyFullRecurrentRunnerCfg,
@@ -128,6 +129,40 @@ class Base_PPOFullRecurrentRunnerCfg(RslRlOnPolicyFullRecurrentRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+@configclass
+class Base_BCPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    num_steps_per_env = 16
+    max_iterations = 1000
+    save_interval = 50
+    resume = False
+    experiment_name = "omnireset_bc_ppo_rgb"
+    obs_groups = {
+        "policy": ["policy"],
+        "critic": ["critic"],
+    }
+    policy = RslRlBCImageActorCriticCfg(
+        bc_checkpoint_path="diffusion_policy/data/outputs/2026.03.20/18.10.35_omnireset_train_mlp_image_sim2real_image/checkpoints/step_0300002.ckpt",
+        critic_hidden_dims=[512, 256, 128],
+        critic_activation="elu",
+        freeze_encoder=True,  # False requires num_mini_batches>=32 for GPU memory
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        normalize_advantage_per_mini_batch=False,
+        clip_param=0.2,
+        entropy_coef=0.006,
+        num_learning_epochs=5,
+        num_mini_batches=16,
+        learning_rate=1.0e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
 
 @configclass
 class Base_DAggerRunnerCfg(Base_PPORunnerCfg):

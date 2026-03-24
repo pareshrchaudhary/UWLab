@@ -77,6 +77,26 @@ class RslRlFancyPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
 
 @configclass
+class RslRlBCImageActorCriticCfg:
+    """Configuration for BCImageActorCritic module."""
+
+    class_name: str = "BCImageActorCritic"
+    """The policy class name."""
+
+    bc_checkpoint_path: str = MISSING  # type: ignore
+    """Path to the BC-trained MLPImagePolicy checkpoint (.ckpt)."""
+
+    critic_hidden_dims: list[int] = MISSING  # type: ignore
+    """Hidden layer dimensions for the critic MLP."""
+
+    critic_activation: str = "elu"
+    """Activation function for the critic MLP."""
+
+    freeze_encoder: bool = False
+    """Whether to freeze the BC image encoder during PPO fine-tuning."""
+
+
+@configclass
 class RslRlAsymmetricActorCriticCfg(RslRlFancyActorCriticCfg):
     """Configuration for the asymmetric actor-critic networks with recurrent actor."""
 
