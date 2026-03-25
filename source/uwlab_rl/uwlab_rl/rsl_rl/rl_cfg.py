@@ -7,7 +7,7 @@ from dataclasses import MISSING
 from typing import Literal
 
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl import RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg  # noqa: F401
+from isaaclab_rl.rsl_rl import RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlBaseRunnerCfg, RslRlPpoActorCriticRecurrentCfg  # noqa: F401
 
 
 @configclass
@@ -77,3 +77,176 @@ class RslRlFancyPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
 
     offline_algorithm_cfg: OffPolicyAlgorithmCfg | None = None
     """The configuration for the offline algorithms."""
+
+
+@configclass
+class RslRlAsymmetricActorCriticCfg(RslRlFancyActorCriticCfg):
+    """Configuration for the asymmetric actor-critic networks with recurrent actor."""
+
+    class_name: str = "AsymmetricActorCritic"
+    """The policy class name. Default is AsymmetricActorCritic."""
+
+    rnn_type: str = MISSING
+    """The type of RNN to use. Either "lstm" or "gru"."""
+
+    rnn_hidden_dim: int = MISSING
+    """The dimension of the RNN layers."""
+
+    rnn_num_layers: int = MISSING
+    """The number of RNN layers."""
+
+
+@configclass
+class RslRLFancyActorCriticRecurrentCfg(RslRlFancyActorCriticCfg):
+    """Configuration for the recurrent actor-critic networks."""
+
+    class_name: str = "ActorCriticRecurrent"
+    """The policy class name. Default is ActorCriticRecurrent."""
+
+    rnn_type: str = MISSING
+    """The type of RNN to use. Either "lstm" or "gru"."""
+
+    rnn_hidden_dim: int = MISSING
+    """The dimension of the RNN layers."""
+
+    rnn_num_layers: int = MISSING
+    """The number of RNN layers."""
+
+
+#########################
+# Runner configurations #
+#########################
+
+@configclass
+class RslRlOnPolicyRecurrentRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the runner for on-policy algorithms with recurrent policies."""
+
+    class_name: str = "OnPolicyRunner"
+    """The runner class name. Default is OnPolicyRunner."""
+
+    policy: RslRlAsymmetricActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration."""
+
+    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    """The algorithm configuration."""
+
+
+@configclass
+class RslRlOnPolicyFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the runner for on-policy algorithms with full recurrent policies."""
+
+    class_name: str = "OnPolicyRunner"
+    """The runner class name. Default is OnPolicyRunner."""
+
+    policy: RslRLFancyActorCriticRecurrentCfg = MISSING  # type: ignore
+    """The policy configuration."""
+
+    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    """The algorithm configuration."""
+
+
+@configclass
+class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the Multi-Agent Reinforcement Learning runner."""
+
+    adversary_update_every_k_episodes: int = MISSING  # type: ignore
+    """Adversary updates every k completed episodes across all envs."""
+
+    obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the main policy."""
+    adversary_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the adversary."""
+
+    policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration."""
+    algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
+    """The algorithm configuration."""
+
+    adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration for the adversary."""
+    adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
+    """The algorithm configuration for the adversary."""
+    adversary_robot_parameters: int = MISSING  # type: ignore
+    """Number of robot domain randomization parameters (indices 0 to N-1)."""
+    adversary_initial_reset_probs: list[float] = MISSING  # type: ignore
+    """Initial reset-state probabilities for adversary output logits (indices N to N+len-1)."""
+    load_run: str = ".*"
+    """The run directory to load. Default is ".*" (all).
+
+    If regex expression, the latest (alphabetical order) matching run will be loaded.
+    """
+    load_checkpoint: str = "model_.*.pt"
+    """The checkpoint file to load. Default is ``"model_.*.pt"`` (all).
+
+    If regex expression, the latest (alphabetical order) matching file will be loaded.
+    """
+
+
+@configclass
+class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the Multi-Agent Reinforcement Learning runner with recurrent policies."""
+
+    adversary_update_every_k_episodes: int = MISSING  # type: ignore
+    """Adversary updates every k completed episodes across all envs."""
+
+    obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the main policy."""
+    adversary_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the adversary."""
+
+    policy: RslRlAsymmetricActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration."""
+    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    """The algorithm configuration."""
+
+    adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration for the adversary."""
+    adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
+    """The algorithm configuration for the adversary."""
+    adversary_robot_parameters: int = MISSING  # type: ignore
+    """Number of robot domain randomization parameters (indices 0 to N-1)."""
+    adversary_initial_reset_probs: list[float] = MISSING  # type: ignore
+    """Initial reset-state probabilities for adversary output logits (indices N to N+len-1)."""
+    load_run: str = ".*"
+    """The run directory to load. Default is ".*" (all).
+
+    If regex expression, the latest (alphabetical order) matching run will be loaded.
+    """
+    load_checkpoint: str = "model_.*.pt"
+    """The checkpoint file to load. Default is ``"model_.*.pt"`` (all).
+
+    If regex expression, the latest (alphabetical order) matching file will be loaded.
+    """
+
+
+@configclass
+class RslRlMARLFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
+    """Configuration of the Multi-Agent RL runner with full recurrent policies."""
+
+    adversary_update_every_k_episodes: int = MISSING  # type: ignore
+    """Adversary updates every k completed episodes across all envs."""
+
+    obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the main policy."""
+    adversary_obs_groups: dict[str, list[str]] = MISSING  # type: ignore
+    """A mapping from observation groups to observation sets for the adversary."""
+
+    policy: RslRLFancyActorCriticRecurrentCfg = MISSING  # type: ignore
+    """The policy configuration."""
+    algorithm: RslRlPpoAlgorithmCfg = MISSING
+    """The algorithm configuration."""
+
+    adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
+    """The policy configuration for the adversary."""
+    adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
+    """The algorithm configuration for the adversary."""
+    load_run: str = ".*"
+    """The run directory to load. Default is ".*" (all).
+
+    If regex expression, the latest (alphabetical order) matching run will be loaded.
+    """
+    load_checkpoint: str = "model_.*.pt"
+    """The checkpoint file to load. Default is ``"model_.*.pt"`` (all).
+
+    If regex expression, the latest (alphabetical order) matching file will be loaded.
+    """
