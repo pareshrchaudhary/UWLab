@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata as metadata
 import inspect
 import random
 from typing import TYPE_CHECKING
@@ -96,15 +95,9 @@ def update_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg, args_cli: argparse.Namespac
 def sanitize_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg) -> RslRlBaseRunnerCfg:
     """Make agent_cfg compatible with the installed rsl-rl version.
 
-    Calls IsaacLab's deprecation handler, then drops any algorithm-config keys
-    that the installed algorithm class does not accept (e.g. ``optimizer`` and
-    ``share_cnn_encoders`` were added for rsl-rl >= 4.0 but are absent in 3.x).
+    Drops algorithm-config keys that the installed algorithm class does not
+    accept (e.g. ``optimizer`` and ``share_cnn_encoders`` for rsl-rl >= 4.0 vs 3.x).
     """
-    from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
-
-    installed_version = metadata.version("rsl-rl-lib")
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
-
     # Resolve the actual algorithm class and drop unknown keys
     alg_cfg = agent_cfg.algorithm
     class_name = getattr(alg_cfg, "class_name", None)
