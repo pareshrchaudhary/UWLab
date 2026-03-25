@@ -42,6 +42,9 @@ docker/.container.cfg
 **/.neptune/*
 docker/artifacts/
 *.tmp
+${data}/
+distillation_method/
+resources/
 
 # Doc Outputs
 **/docs/_build/*
@@ -71,3 +74,5 @@ tests/
 
 # Docker history
 .uw-lab-docker-history
+/uwlab_docker/*
+

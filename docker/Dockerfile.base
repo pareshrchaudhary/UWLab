@@ -54,8 +54,11 @@ RUN chmod +x ${UWLAB_PATH}/uwlab.sh
 # Set up a symbolic link between the installed Isaac Sim root folder and _isaac_sim in the UW Lab directory
 RUN ln -sf ${ISAACSIM_ROOT_PATH} ${UWLAB_PATH}/_isaac_sim
 
-# Install toml dependency
-RUN ${UWLAB_PATH}/uwlab.sh -p -m pip install toml
+# Install toml and setuptools dependencies, then pre-install flatdict without
+# build isolation (its setup.py imports pkg_resources which is absent from the
+# pip-created build-isolation venv on the Isaac Sim Kit Python)
+RUN ${UWLAB_PATH}/uwlab.sh -p -m pip install toml setuptools && \
+    ${UWLAB_PATH}/uwlab.sh -p -m pip install --no-build-isolation "flatdict==4.0.1"
 
 # Install apt dependencies for extensions that declare them in their extension.toml
 RUN --mount=type=cache,target=/var/cache/apt \
@@ -71,7 +74,8 @@ RUN mkdir -p ${ISAACSIM_ROOT_PATH}/kit/cache && \
     mkdir -p ${DOCKER_USER_HOME}/.nv/ComputeCache && \
     mkdir -p ${DOCKER_USER_HOME}/.nvidia-omniverse/logs && \
     mkdir -p ${DOCKER_USER_HOME}/.local/share/ov/data && \
-    mkdir -p ${DOCKER_USER_HOME}/Documents
+    mkdir -p ${DOCKER_USER_HOME}/Documents && \
+    mkdir -p ${UWLAB_PATH}/datasets
 
 # for singularity usage, create NVIDIA binary placeholders
 RUN touch /bin/nvidia-smi && \
