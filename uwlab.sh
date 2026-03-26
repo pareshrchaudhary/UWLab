@@ -617,20 +617,6 @@ while [[ $# -gt 0 ]]; do
             # install the learning frameworks specified
             ${pip_command} -e "${UWLAB_PATH}/source/uwlab_rl[${framework_name}]"
 
-            # --- ensure local rsl-rl-lib (submodule) is used in editable mode ---
-            echo "[INFO] Installing rsl-rl-lib from local directory in editable mode..."
-            rsl_rl_root="${UWLAB_PATH}/rsl_rl"
-            if [ ! -d "${rsl_rl_root}" ]; then
-                echo "[ERROR] rsl_rl directory not found at ${rsl_rl_root}. Make sure the submodule is initialized (e.g., 'git submodule update --init --recursive')."
-                exit 1
-            fi
-            ${pip_command} --no-cache-dir --force-reinstall --no-deps -e "${rsl_rl_root}"
-            echo "[INFO] Verified: rsl-rl-lib installed in editable mode from ${rsl_rl_root}."
-
-            # install zarr v2 for diffusion_policy dataset compatibility
-            echo "[INFO] Installing zarr<3 for diffusion_policy compatibility..."
-            ${pip_command} "zarr<3"
-
             # in some rare cases, torch might not be installed properly by setup.py, add one more check here
             # can prevent that from happening
             ensure_cuda_torch

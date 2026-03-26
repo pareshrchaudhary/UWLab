@@ -1,4 +1,0 @@
-[submodule "rsl_rl"]
-	path = rsl_rl
-	url = https://github.com/pareshrchaudhary/rsl_rl.git
-	branch = multi-agent-runner
