@@ -108,6 +108,44 @@ gym.register(
     },
 )
 
+# Single-variant state eval configs (multi-variant bench uses State-Play-v0 + apply_multi_eval_events)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV0-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV0",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV1-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV2-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV3-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+
 gym.register(
     id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Finetune-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
@@ -140,6 +178,53 @@ gym.register(
     },
 )
 
+# Aliases and OOD physics eval RGB (cage-clean registry)
+gym.register(
+    id="OmniReset-Eval-RGB",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.data_collection_rgb_cfg:Ur5eRobotiq2f85EvalRGBRelCartesianOSCCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Eval-RGB-OOD-OSC",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_rgb_cfg:RGBOODOSCCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Eval-RGB-OOD-Robot",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_rgb_cfg:RGBOODRobotCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Eval-RGB-OOD-Object",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_rgb_cfg:RGBOODObjectCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Eval-RGB-OOD-All",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_rgb_cfg:RGBOODAllCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+
 # OOD (out-of-distribution) RGB environments
 gym.register(
     id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-RGB-OOD-DataCollection-v0",
@@ -159,6 +244,25 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.data_collection_rgb_cfg:Ur5eRobotiq2f85EvalRGBRelCartesianOSCOODCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+
+gym.register(
+    id="OmniReset-Eval-OOD-RGB",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.data_collection_rgb_cfg:Ur5eRobotiq2f85EvalRGBRelCartesianOSCOODCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Eval-OOD-RGB-OOD-All",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_rgb_cfg:OODRGBOODAllCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_DAggerRunnerCfg",
     },
 )

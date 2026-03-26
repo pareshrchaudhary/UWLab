@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025, The UW Lab Project Developers.
+# Copyright (c) 2024-2026, The UW Lab Project Developers.
 # All Rights Reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -62,8 +62,8 @@ from isaaclab.utils.io import dump_yaml
 from uwlab_tasks.utils.hydra import hydra_task_config
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
-# Import eval variants setup
-from uwlab_tasks.manager_based.manipulation.assembly_task.omnireset.mdp.eval import (
+# Import eval variants setup (OmniReset UR5e eval variants + multi-env reset wiring)
+from uwlab_tasks.manager_based.manipulation.omnireset.mdp.eval import (
     NUM_EVAL_VARIANTS,
     apply_multi_eval_events,
 )
