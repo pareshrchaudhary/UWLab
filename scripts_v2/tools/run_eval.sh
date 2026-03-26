@@ -5,16 +5,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-# CHECKPOINT="/home/paresh/UWLab/diffusion_policy/data/outputs/2026.03.20/18.10.35_omnireset_train_mlp_image_sim2real_image/checkpoints/step_0300002.ckpt"
-CHECKPOINT="/home/paresh/UWLab/diffusion_policy/data/outputs/2026.03.19/20.20.45_cage_train_mlp_image_sim2real_image/checkpoints/step_0120001.ckpt"
+CHECKPOINT="/home/paresh/cage/policies/leg_distilled_rgb.ckpt"
 NUM_ENVS=32
 NUM_TRAJ=100
-NUM_REPEATS=5
+NUM_REPEATS=1
 
-LOG_DIR="$(dirname "$(dirname "$CHECKPOINT")")"
-STEP="$(basename "$CHECKPOINT" .ckpt)"
-LOG_FILE="${LOG_DIR}/eval_${STEP}.txt"
-mkdir -p "$LOG_DIR"
+CKPT_DIR="$(dirname "$CHECKPOINT")"
+LOG_FILE="$CKPT_DIR/eval_$(basename "$CHECKPOINT" .ckpt).txt"
+mkdir -p "$CKPT_DIR"
 : >"$LOG_FILE"
 
 TASKS=(
@@ -41,7 +39,9 @@ for task in "${TASKS[@]}"; do
       --headless \
       --enable_cameras \
       --eval_summary_log "$LOG_FILE" \
-      > /dev/null 2>&1
+      env.scene.insertive_object=fbleg \
+      env.scene.receptive_object=fbtabletop \
+      # > /dev/null 2>&1
     sleep 5
   done
 done
