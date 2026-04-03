@@ -99,6 +99,9 @@ services:
     build:
       context: ../
       dockerfile: docker/Dockerfile.base
+      # Sibling checkout (e.g. monorepo: ../rsl_rl next to UWLab); not inside UWLab context
+      additional_contexts:
+        rsl_rl: ../../rsl_rl
       args:
         - ISAACSIM_BASE_IMAGE_ARG=${ISAACSIM_BASE_IMAGE}
         - ISAACSIM_VERSION_ARG=${ISAACSIM_VERSION}

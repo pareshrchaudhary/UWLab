@@ -47,6 +47,8 @@ RUN --mount=type=cache,target=/var/cache/apt \
 
 # Copy the UW Lab directory (files to exclude are defined in .dockerignore)
 COPY ../ ${UWLAB_PATH}
+# Local rsl_rl: sibling of UWLab on host; compose sets build context name via additional_contexts
+COPY --from=rsl_rl . ${UWLAB_PATH}/rsl_rl
 
 # Ensure uwlab.sh has execute permissions
 RUN chmod +x ${UWLAB_PATH}/uwlab.sh
@@ -91,6 +93,10 @@ RUN touch /bin/nvidia-smi && \
 # use pip caching to avoid reinstalling large packages
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
     ${UWLAB_PATH}/uwlab.sh --install
+
+# Install rsl_rl from the copied local tree (see COPY rsl_rl above)
+RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
+    ${UWLAB_PATH}/uwlab.sh -p -m pip install ${UWLAB_PATH}/rsl_rl
 
 # HACK: Remove install of quadprog dependency
 RUN ${UWLAB_PATH}/uwlab.sh -p -m pip uninstall -y quadprog
