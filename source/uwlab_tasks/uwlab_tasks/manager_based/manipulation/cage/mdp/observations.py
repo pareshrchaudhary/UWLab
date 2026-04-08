@@ -13,6 +13,9 @@ from isaaclab.managers import ManagerTermBase, ObservationTermCfg, SceneEntityCf
 from isaaclab.sensors import Camera, RayCasterCamera, TiledCamera
 
 from uwlab_tasks.manager_based.manipulation.cage.assembly_keypoints import Offset
+from uwlab_tasks.manager_based.manipulation.cage.mdp.actions.adversary_actions_cfg import (
+    ADVERSARY_POSE_ACTION_DIM,
+)
 from uwlab_tasks.manager_based.manipulation.cage.mdp import utils
 
 
@@ -306,7 +309,7 @@ def binary_force_contact(
 # =============================================================================
 
 
-def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = 13) -> torch.Tensor:
+def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = ADVERSARY_POSE_ACTION_DIM) -> torch.Tensor:
     """For MARL environments where actions are [policy_actions | adversary_actions],
     returns only the policy portion."""
     full_actions = env.action_manager.action
@@ -314,6 +317,6 @@ def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = 13) -
     return full_actions[:, :policy_action_dim]
 
 
-def adversary_noise(env: ManagerBasedEnv, dim: int = 8) -> torch.Tensor:
+def adversary_noise(env: ManagerBasedEnv, dim: int = ADVERSARY_POSE_ACTION_DIM) -> torch.Tensor:
     """Standard normal noise for adversary policy input."""
     return torch.randn((env.num_envs, dim), device=env.device, dtype=torch.float)

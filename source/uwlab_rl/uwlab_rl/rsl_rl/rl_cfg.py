@@ -167,9 +167,7 @@ class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
     adversary_robot_parameters: int = MISSING  # type: ignore
-    """Number of robot domain randomization parameters (indices 0 to N-1)."""
-    adversary_initial_reset_probs: list[float] = MISSING  # type: ignore
-    """Initial reset-state probabilities for adversary output logits (indices N to N+len-1)."""
+    """Number of robot domain randomization parameters controlled by the adversary."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
@@ -204,9 +202,7 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
     adversary_robot_parameters: int = MISSING  # type: ignore
-    """Number of robot domain randomization parameters (indices 0 to N-1)."""
-    adversary_initial_reset_probs: list[float] = MISSING  # type: ignore
-    """Initial reset-state probabilities for adversary output logits (indices N to N+len-1)."""
+    """Number of robot domain randomization parameters controlled by the adversary."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
@@ -240,6 +236,8 @@ class RslRlMARLFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
     """The policy configuration for the adversary."""
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
+    adversary_robot_parameters: int = MISSING  # type: ignore
+    """Number of domain randomization scalars controlled by the adversary (env action tail)."""
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 

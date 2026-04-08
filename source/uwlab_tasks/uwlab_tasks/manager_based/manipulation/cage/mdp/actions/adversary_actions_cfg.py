@@ -10,6 +10,9 @@ from isaaclab.utils import configclass
 from .adversary_actions import AdversaryAction
 
 
+# Receptive root: x, y, yaw (indices 0–2). Insertive offset: 6-D pose in body frame (3–8).
+ADVERSARY_POSE_ACTION_DIM = 9
+
 @configclass
 class AdversaryActionCfg(ActionTermCfg):
     """Storage-only action term for adversary outputs."""
@@ -18,4 +21,4 @@ class AdversaryActionCfg(ActionTermCfg):
 
     asset_name: str = "robot"
 
-    action_dim: int = 13
+    action_dim: int = ADVERSARY_POSE_ACTION_DIM

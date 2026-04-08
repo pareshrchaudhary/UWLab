@@ -10,7 +10,7 @@ from isaaclab.utils import configclass
 from uwlab_assets.robots.ur5e_robotiq_gripper.actions import ROBOTIQ_GRIPPER_BINARY_ACTIONS
 
 from ...mdp.actions.actions_cfg import RelCartesianOSCActionCfg
-from ...mdp.actions.adversary_actions_cfg import AdversaryActionCfg
+from ...mdp.actions.adversary_actions_cfg import ADVERSARY_POSE_ACTION_DIM, AdversaryActionCfg
 
 # Pre-train gains (soft initial Kp; curriculum ramps to stiff terminal)
 UR5E_ROBOTIQ_2F85_RELATIVE_OSC = RelCartesianOSCActionCfg(
@@ -70,8 +70,8 @@ class Ur5eRobotiq2f85SysidOSCAction:
     gripper = ROBOTIQ_GRIPPER_BINARY_ACTIONS
 
 
-# Adversary action config
-UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION = AdversaryActionCfg(action_dim=13)
+# Adversary action config (must match AdversaryBaseEventCfg index map in rl_state_cfg)
+UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION = AdversaryActionCfg(action_dim=ADVERSARY_POSE_ACTION_DIM)
 
 
 @configclass

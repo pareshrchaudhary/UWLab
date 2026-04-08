@@ -7,10 +7,11 @@ from __future__ import annotations
 
 from dataclasses import MISSING
 
+import numpy as np
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -22,13 +23,12 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR
-from uwlab_assets.robots.ur5e_robotiq_gripper import EXPLICIT_UR5E_ROBOTIQ_2F85, IMPLICIT_UR5E_ROBOTIQ_2F85
+from uwlab_assets.robots.ur5e_robotiq_gripper import IMPLICIT_UR5E_ROBOTIQ_2F85
 
 from uwlab_tasks.manager_based.manipulation.cage.config.ur5e_robotiq_2f85.actions import (
     UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION,
     Ur5eRobotiq2f85AdversaryOSCAction,
     Ur5eRobotiq2f85RelativeOSCAction,
-    Ur5eRobotiq2f85RelativeOSCEvalAction,
 )
 
 from ... import mdp as task_mdp
@@ -105,25 +105,22 @@ class RlStateSceneCfg(InteractiveSceneCfg):
         ),
     )
 
-
 @configclass
-class BaseEventCfg:
-    """Shared events: material/mass randomization, gripper gains, scene reset.
+class AdversaryBaseEventCfg:
+    """Base events for adversary training with fixed material/mass values.
 
-    Does NOT include arm sysid or OSC gain randomization -- those differ
-    between finetune (curriculum-ramped) and eval (fixed) stages.  See
-    ``FinetuneEventCfg`` and ``FinetuneEvalEventCfg``.
+    Material and mass properties are held constant here. Adversary-controlled
+    randomization of these parameters is deferred to later stages.
     """
 
-    # mode: startup (randomize dynamics)
-    robot_material = EventTerm(
+    reset_robot_material = EventTerm(
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (0.3, 1.2),
-            "dynamic_friction_range": (0.2, 1.0),
+            "static_friction_range": (0.3, 0.3),
+            "dynamic_friction_range": (0.2, 0.2),
             "restitution_range": (0.0, 0.0),
-            "num_buckets": 256,
+            "num_buckets": 1,
             "asset_cfg": SceneEntityCfg("robot"),
             "make_consistent": True,
         },
@@ -133,10 +130,10 @@ class BaseEventCfg:
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (1.0, 2.0),
-            "dynamic_friction_range": (0.9, 1.9),
+            "static_friction_range": (0.3, 0.3),
+            "dynamic_friction_range": (0.2, 0.2),
             "restitution_range": (0.0, 0.0),
-            "num_buckets": 256,
+            "num_buckets": 1,
             "asset_cfg": SceneEntityCfg("insertive_object"),
             "make_consistent": True,
         },
@@ -146,10 +143,10 @@ class BaseEventCfg:
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (0.2, 0.6),
-            "dynamic_friction_range": (0.15, 0.5),
+            "static_friction_range": (0.3, 0.3),
+            "dynamic_friction_range": (0.2, 0.2),
             "restitution_range": (0.0, 0.0),
-            "num_buckets": 256,
+            "num_buckets": 1,
             "asset_cfg": SceneEntityCfg("receptive_object"),
             "make_consistent": True,
         },
@@ -159,10 +156,10 @@ class BaseEventCfg:
         func=task_mdp.randomize_rigid_body_material,  # type: ignore
         mode="startup",
         params={
-            "static_friction_range": (0.3, 0.6),
-            "dynamic_friction_range": (0.2, 0.5),
+            "static_friction_range": (0.3, 0.3),
+            "dynamic_friction_range": (0.2, 0.2),
             "restitution_range": (0.0, 0.0),
-            "num_buckets": 256,
+            "num_buckets": 1,
             "asset_cfg": SceneEntityCfg("table"),
             "make_consistent": True,
         },
@@ -173,7 +170,7 @@ class BaseEventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "mass_distribution_params": (0.7, 1.3),
+            "mass_distribution_params": (1.0, 1.0),
             "operation": "scale",
             "distribution": "uniform",
             "recompute_inertia": True,
@@ -185,8 +182,7 @@ class BaseEventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("insertive_object"),
-            # we assume insertive object is somewhere between 20g and 200g
-            "mass_distribution_params": (0.02, 0.2),
+            "mass_distribution_params": (0.02, 0.02),
             "operation": "abs",
             "distribution": "uniform",
             "recompute_inertia": True,
@@ -198,7 +194,7 @@ class BaseEventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("receptive_object"),
-            "mass_distribution_params": (0.5, 1.5),
+            "mass_distribution_params": (1.0, 1.0),
             "operation": "scale",
             "distribution": "uniform",
             "recompute_inertia": True,
@@ -210,7 +206,7 @@ class BaseEventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("table"),
-            "mass_distribution_params": (0.5, 1.5),
+            "mass_distribution_params": (1.0, 1.0),
             "operation": "scale",
             "distribution": "uniform",
             "recompute_inertia": True,
@@ -222,131 +218,54 @@ class BaseEventCfg:
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
-            "stiffness_distribution_params": (0.5, 2.0),
-            "damping_distribution_params": (0.5, 2.0),
+            "stiffness_distribution_params": (1.0, 1.0),
+            "damping_distribution_params": (1.0, 1.0),
             "operation": "scale",
             "distribution": "log_uniform",
         },
     )
 
-    # mode: reset
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
 
-
-@configclass
-class TrainEventCfg(BaseEventCfg):
-    """Training events: material/mass randomization + 4-path resets. No sysid or OSC gain randomization."""
-
-    reset_from_reset_states = EventTerm(
-        func=task_mdp.MultiResetManager,
+    reset_receptive_object_pose = EventTerm(
+        func=task_mdp.adversary_reset_root_states_from_action,
         mode="reset",
         params={
+            "pose_range": {
+                "x": (0.3, 0.55),
+                "y": (-0.1, 0.3),
+                "z": (0.0, 0.0),
+                "roll": (0.0, 0.0),
+                "pitch": (0.0, 0.0),
+                "yaw": (-np.pi / 12, np.pi / 12),
+            },
+            "asset_cfgs": {"receptive_object": SceneEntityCfg("receptive_object")},
+            "offset_asset_cfg": SceneEntityCfg("ur5_metal_support"),
+            "use_bottom_offset": True,
+            "action_name": "adversaryaction",
+            "action_x_index": 0,
+            "action_y_index": 1,
+            "action_yaw_index": 2,
+        },
+    )
+
+    reset_insertive_object = EventTerm(
+        func=task_mdp.adversary_reset_insertive_from_assembled_offset,
+        mode="reset",
+        params={
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
             "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
-            "reset_types": [
-                "ObjectAnywhereEEAnywhere",
-                "ObjectRestingEEGrasped",
-                "ObjectAnywhereEEGrasped",
-                "ObjectPartiallyAssembledEEGrasped",
-            ],
-            "probs": [0.25, 0.25, 0.25, 0.25],
-            "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-        },
-    )
-
-
-@configclass
-class TrainEvalEventCfg(BaseEventCfg):
-    """Eval after Stage 1: no sysid/OSC gain randomization, 1-path resets."""
-
-    reset_from_reset_states = EventTerm(
-        func=task_mdp.MultiResetManager,
-        mode="reset",
-        params={
-            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
-            "reset_types": ["ObjectAnywhereEEAnywhere"],
-            "probs": [1.0],
-            "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-        },
-    )
-
-
-@configclass
-class FinetuneEvalEventCfg(BaseEventCfg):
-    """Eval after Stage 2: fixed sysid + OSC gains (scale_progress=1) + 1-path resets."""
-
-    randomize_arm_sysid = EventTerm(
-        func=task_mdp.randomize_arm_from_sysid_fixed,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "joint_names": [
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            "actuator_name": "arm",
-            "scale_range": (0.8, 1.2),
-            "delay_range": (0, 1),
-        },
-    )
-
-    randomize_osc_gains = EventTerm(
-        func=task_mdp.randomize_rel_cartesian_osc_gains_fixed,
-        mode="reset",
-        params={
-            "action_name": "arm",
-            "scale_range": (0.8, 1.2),
-        },
-    )
-
-    reset_from_reset_states = EventTerm(
-        func=task_mdp.MultiResetManager,
-        mode="reset",
-        params={
-            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
-            "reset_types": ["ObjectAnywhereEEAnywhere"],
-            "probs": [1.0],
-            "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-        },
-    )
-
-
-@configclass
-class FinetuneEventCfg(TrainEventCfg):
-    """Finetune events: curriculum-ramped sysid + OSC gains + 4-path resets. Explicit actuator from start."""
-
-    randomize_arm_sysid = EventTerm(
-        func=task_mdp.randomize_arm_from_sysid,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot"),
-            "joint_names": [
-                "shoulder_pan_joint",
-                "shoulder_lift_joint",
-                "elbow_joint",
-                "wrist_1_joint",
-                "wrist_2_joint",
-                "wrist_3_joint",
-            ],
-            "actuator_name": "arm",
-            "scale_range": (0.8, 1.2),
-            "delay_range": (0, 1),
-            "initial_scale_progress": 0.0,
-        },
-    )
-
-    randomize_osc_gains = EventTerm(
-        func=task_mdp.randomize_rel_cartesian_osc_gains,
-        mode="reset",
-        params={
-            "action_name": "arm",
-            "scale_range": (0.8, 1.2),
-            "terminal_kp": (1000.0, 1000.0, 1000.0, 50.0, 50.0, 50.0),
-            "terminal_damping_ratio": (1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
-            "initial_scale_progress": 0.0,
+            "pose_range_b": {
+                "x": (-0.3, 0.3),
+                "y": (-0.3, 0.3),
+                "z": (0.0, 0.3),
+                "roll": (-np.pi, np.pi),
+                "pitch": (-np.pi, np.pi),
+                "yaw": (-np.pi, np.pi),
+            },
+            "action_name": "adversaryaction",
+            "action_start_index": 3,
         },
     )
 
@@ -371,7 +290,10 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action)
+        prev_actions = ObsTerm(
+            func=task_mdp.policy_last_action,
+            params={"adversary_action_dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION.action_dim},
+        )
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos)
 
@@ -420,7 +342,10 @@ class ObservationsCfg:
     class CriticCfg(ObsGroup):
         """Critic observations for policy group."""
 
-        prev_actions = ObsTerm(func=task_mdp.last_action)
+        prev_actions = ObsTerm(
+            func=task_mdp.policy_last_action,
+            params={"adversary_action_dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION.action_dim},
+        )
 
         joint_pos = ObsTerm(func=task_mdp.joint_pos)
 
@@ -522,6 +447,36 @@ class ObservationsCfg:
 
 
 @configclass
+class AdversaryPolicyCfg(ObsGroup):
+    """Adversary actor observations (bandit-style: noise input only)."""
+
+    noise = ObsTerm(
+        func=task_mdp.adversary_noise,
+        params={"dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION.action_dim},
+    )
+
+    def __post_init__(self):
+        self.enable_corruption = False
+        self.concatenate_terms = True
+        self.history_length = 1
+
+
+@configclass
+class MARLObservationsCfg:
+    """Combined observation groups for MARL training.
+
+    Keys in obs_buf:
+        - "policy": policy actor observations (with adversary action stripped from prev_actions)
+        - "critic": policy critic observations
+        - "adversary_policy": adversary actor observations (noise only)
+    """
+
+    policy: ObservationsCfg.PolicyCfg = ObservationsCfg.PolicyCfg()
+    critic: ObservationsCfg.CriticCfg = ObservationsCfg.CriticCfg()
+    adversary_policy: AdversaryPolicyCfg = AdversaryPolicyCfg()
+
+
+@configclass
 class RewardsCfg:
 
     # safety rewards
@@ -575,42 +530,8 @@ class TerminationsCfg:
 
 
 @configclass
-class FinetuneCurriculumsCfg:
-    """Finetune curriculum: ADR sysid + action scale ramp. No actuator swap (explicit from start)."""
-
-    adr_sysid = CurrTerm(
-        func=task_mdp.adr_sysid_curriculum,
-        params={
-            "event_term_names": ["randomize_arm_sysid", "randomize_osc_gains"],
-            "reset_event_name": "reset_from_reset_states",
-            "success_threshold_up": 0.95,
-            "success_threshold_down": 0.9,
-            "delta": 0.01,
-            "update_every_n_steps": 200,
-            "initial_scale_progress": 0.0,
-            "warmup_success_threshold": 0.95,
-        },
-    )
-
-    action_scale = CurrTerm(
-        func=task_mdp.action_scale_curriculum,
-        params={
-            "action_name": "arm",
-            "reset_event_name": "reset_from_reset_states",
-            "initial_scales": [0.02, 0.02, 0.02, 0.02, 0.02, 0.2],
-            "target_scales": [0.01, 0.01, 0.002, 0.02, 0.02, 0.2],
-            "success_threshold_up": 0.95,
-            "success_threshold_down": 0.9,
-            "delta": 0.01,
-            "update_every_n_steps": 200,
-            "initial_progress": 0.0,
-        },
-    )
-
-
-@configclass
 class NoCurriculumsCfg:
-    """No curriculum (eval / data-collection with fixed 0.8--1.2 randomization)."""
+    """No curriculum"""
 
     pass
 
@@ -685,7 +606,7 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
     curriculum: NoCurriculumsCfg = NoCurriculumsCfg()
-    events: BaseEventCfg = MISSING
+    events: AdversaryBaseEventCfg = MISSING
     commands: CommandsCfg = CommandsCfg()
     viewer: ViewerCfg = ViewerCfg(eye=(2.0, 0.0, 0.75), origin_type="world", env_index=0, asset_name="robot")
     variants = variants
@@ -717,298 +638,11 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
         self.sim.render.enable_dl_denoiser = True
 
 
-# Training configuration (Stage 1: no curriculum, implicit actuator, no sysid DR)
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCTrainCfg(Ur5eRobotiq2f85RlStateCfg):
-
-    events: TrainEventCfg = TrainEventCfg()
-    actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
-
-
-# Finetune configuration (Stage 2: explicit actuator, curriculum ramps sysid + gains + scales)
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCFinetuneCfg(Ur5eRobotiq2f85RlStateCfg):
-    """Finetune config: loads converged Stage 1 policy, explicit actuator from start, curriculum ramps DR."""
-
-    events: FinetuneEventCfg = FinetuneEventCfg()
-    actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
-    curriculum: FinetuneCurriculumsCfg = FinetuneCurriculumsCfg()
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-
-# Evaluation configuration (after Stage 1: implicit actuator, soft gains, no sysid DR)
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCEvalCfg(Ur5eRobotiq2f85RlStateCfg):
-    """Eval after Stage 1: implicit actuator, soft gains, large action scale, no sysid DR."""
-
-    events: TrainEvalEventCfg = TrainEvalEventCfg()
-    actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()
-
-
-# Evaluation configuration (after Stage 2: explicit actuator, stiff gains, fixed sysid)
-@configclass
-class Ur5eRobotiq2f85RelCartesianOSCFinetuneEvalCfg(Ur5eRobotiq2f85RlStateCfg):
-    """Eval after Stage 2: explicit actuator, stiff gains, small action scale, fixed sysid + OSC gains."""
-
-    events: FinetuneEvalEventCfg = FinetuneEvalEventCfg()
-    actions: Ur5eRobotiq2f85RelativeOSCEvalAction = Ur5eRobotiq2f85RelativeOSCEvalAction()
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.scene.robot = EXPLICIT_UR5E_ROBOTIQ_2F85.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-
-# =============================================================================
-# CAGE Adversary Configurations
-# =============================================================================
-
-
-@configclass
-class AdversaryBaseEventCfg:
-    """Event config where robot parameters are adversary-controlled.
-
-    Robot material, mass, joint params, gripper actuator gains, and OSC gains are
-    set by the adversary action (indices 0-8). Object/table parameters remain as
-    uniform startup DR. Reset state probabilities are adversary-controlled (indices 9-12).
-    """
-
-    # ---- Adversary-controlled robot parameters (reset events) ----
-
-    # Adversary action indices: [0] static_friction, [1] dynamic_friction
-    robot_material = EventTerm(
-        func=task_mdp.adversary_robot_material_from_action,
-        mode="reset",
-        params={
-            "action_name": "adversaryaction",
-            "asset_cfg": SceneEntityCfg("robot"),
-            "static_friction_range": (0.3, 1.2),
-            "dynamic_friction_range": (0.2, 1.0),
-            "num_buckets": 256,
-            "make_consistent": True,
-        },
-    )
-
-    # Adversary action index: [2] mass_scale
-    randomize_robot_mass = EventTerm(
-        func=task_mdp.adversary_robot_mass_from_action,
-        mode="reset",
-        params={
-            "action_name": "adversaryaction",
-            "asset_cfg": SceneEntityCfg("robot"),
-            "mass_scale_range": (0.7, 1.3),
-            "recompute_inertia": True,
-        },
-    )
-
-    # Adversary action indices: [3] friction_scale, [4] armature_scale
-    randomize_robot_joint_parameters = EventTerm(
-        func=task_mdp.adversary_robot_joint_parameters_from_action,
-        mode="reset",
-        params={
-            "action_name": "adversaryaction",
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["shoulder.*", "elbow.*", "wrist.*", "finger_joint"]),
-            "friction_scale_range": (0.25, 4.0),
-            "armature_scale_range": (0.25, 4.0),
-        },
-    )
-
-    # Adversary action indices: [5] stiffness_scale, [6] damping_scale
-    randomize_gripper_actuator_parameters = EventTerm(
-        func=task_mdp.adversary_gripper_actuator_gains_from_action,
-        mode="reset",
-        params={
-            "action_name": "adversaryaction",
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
-            "stiffness_scale_range": (0.5, 2.0),
-            "damping_scale_range": (0.5, 2.0),
-        },
-    )
-
-    # Adversary action indices: [7] osc_stiffness_scale, [8] osc_damping_scale
-    randomize_osc_gains = EventTerm(
-        func=task_mdp.adversary_operational_space_controller_gains_from_action,
-        mode="reset",
-        params={
-            "adversary_action_name": "adversaryaction",
-            "osc_action_name": "arm",
-            "stiffness_scale_range": (0.7, 1.3),
-            "damping_scale_range": (0.9, 1.1),
-            "action_stiffness_index": 7,
-            "action_damping_index": 8,
-        },
-    )
-
-    # ---- Uniform startup DR for objects/table (NOT adversary-controlled) ----
-
-    insertive_object_material = EventTerm(
-        func=task_mdp.randomize_rigid_body_material,
-        mode="startup",
-        params={
-            "static_friction_range": (1.0, 2.0),
-            "dynamic_friction_range": (0.9, 1.9),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 256,
-            "asset_cfg": SceneEntityCfg("insertive_object"),
-            "make_consistent": True,
-        },
-    )
-
-    randomize_insertive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("insertive_object"),
-            "mass_distribution_params": (0.02, 0.2),
-            "operation": "abs",
-            "distribution": "uniform",
-            "recompute_inertia": True,
-        },
-    )
-
-    receptive_object_material = EventTerm(
-        func=task_mdp.randomize_rigid_body_material,
-        mode="startup",
-        params={
-            "static_friction_range": (0.2, 0.6),
-            "dynamic_friction_range": (0.15, 0.5),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 256,
-            "asset_cfg": SceneEntityCfg("receptive_object"),
-            "make_consistent": True,
-        },
-    )
-
-    randomize_receptive_object_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("receptive_object"),
-            "mass_distribution_params": (0.5, 1.5),
-            "operation": "scale",
-            "distribution": "uniform",
-            "recompute_inertia": True,
-        },
-    )
-
-    table_material = EventTerm(
-        func=task_mdp.randomize_rigid_body_material,
-        mode="startup",
-        params={
-            "static_friction_range": (0.3, 0.6),
-            "dynamic_friction_range": (0.2, 0.5),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 256,
-            "asset_cfg": SceneEntityCfg("table"),
-            "make_consistent": True,
-        },
-    )
-
-    randomize_table_mass = EventTerm(
-        func=task_mdp.randomize_rigid_body_mass,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("table"),
-            "mass_distribution_params": (0.5, 1.5),
-            "operation": "scale",
-            "distribution": "uniform",
-            "recompute_inertia": True,
-        },
-    )
-
-    # ---- Reset events ----
-
-    reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
-
-
-@configclass
-class AdversaryTrainEventCfg(AdversaryBaseEventCfg):
-    """Adversary training events: 4-path resets with adversary-controlled probabilities."""
-
-    # Adversary action indices [9-12]: reset type probability logits
-    reset_from_reset_states = EventTerm(
-        func=task_mdp.AdversaryMultiResetManager,
-        mode="reset",
-        params={
-            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
-            "reset_types": [
-                "ObjectAnywhereEEAnywhere",
-                "ObjectRestingEEGrasped",
-                "ObjectAnywhereEEGrasped",
-                "ObjectPartiallyAssembledEEGrasped",
-            ],
-            "probs": [0.25, 0.25, 0.25, 0.25],
-            "action_name": "adversaryaction",
-            "action_prob_start_idx": 9,
-            "min_prob": 0.05,
-            "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-        },
-    )
-
-
-# ---- Adversary Observations ----
-
-@configclass
-class AdversaryObservationsCfg:
-    """Observation group for the adversary agent (bandit-style: noise input only)."""
-
-    @configclass
-    class PolicyCfg(ObsGroup):
-        noise = ObsTerm(
-            func=task_mdp.adversary_noise,
-            params={"dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION.action_dim},
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
-            self.history_length = 1
-
-    policy: PolicyCfg = PolicyCfg()
-
-
-@configclass
-class MARLObservationsCfg:
-    """Combined observation groups for MARL training.
-
-    Keys in obs_buf:
-        - "policy": policy actor observations (with adversary action stripped from prev_actions)
-        - "critic": policy critic observations
-        - "adversary_policy": adversary actor observations (noise only)
-    """
-
-    @configclass
-    class PolicyCfg(ObservationsCfg.PolicyCfg):
-        """Policy observations with adversary action dimension stripped from prev_actions."""
-
-        prev_actions = ObsTerm(
-            func=task_mdp.policy_last_action,
-            params={"adversary_action_dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION.action_dim},
-        )
-
-    @configclass
-    class CriticCfg(ObservationsCfg.CriticCfg):
-        """Critic observations with adversary action dimension stripped from prev_actions."""
-
-        prev_actions = ObsTerm(
-            func=task_mdp.policy_last_action,
-            params={"adversary_action_dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION.action_dim},
-        )
-
-    policy: PolicyCfg = PolicyCfg()
-    critic: CriticCfg = CriticCfg()
-    adversary_policy: AdversaryObservationsCfg.PolicyCfg = AdversaryObservationsCfg.PolicyCfg()
-
-
-# ---- Adversary Training Config ----
-
 @configclass
 class Ur5eRobotiq2f85AdversaryTrainCfg(Ur5eRobotiq2f85RlStateCfg):
     """CAGE adversarial training: policy + adversary MARL with implicit actuator."""
 
-    events: AdversaryTrainEventCfg = AdversaryTrainEventCfg()
+    events: AdversaryBaseEventCfg = AdversaryBaseEventCfg()
     actions: Ur5eRobotiq2f85AdversaryOSCAction = Ur5eRobotiq2f85AdversaryOSCAction()
     observations: MARLObservationsCfg = MARLObservationsCfg()
     curriculum: NoCurriculumsCfg = NoCurriculumsCfg()

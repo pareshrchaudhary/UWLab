@@ -29,7 +29,6 @@ from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
 from pxr import Gf, UsdGeom, UsdLux
 
-from isaaclab.utils.version import get_isaac_sim_version
 from uwlab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 
 from uwlab_tasks.manager_based.manipulation.cage.mdp import utils
@@ -2410,76 +2409,20 @@ def _get_action_term_raw_actions(env: ManagerBasedEnv, action_name: str) -> torc
     return raw_actions
 
 
-def adversary_operational_space_controller_gains_from_action(
-    env: ManagerBasedEnv,
-    env_ids: torch.Tensor,
-    adversary_action_name: str,
-    osc_action_name: str,
-    stiffness_scale_range: tuple[float, float],
-    damping_scale_range: tuple[float, float],
-    action_stiffness_index: int = 7,
-    action_damping_index: int = 8,
-) -> None:
-    """Set OSC stiffness/damping gains from adversary action (reset-only).
-
-    Adapted for the local RelCartesianOSCAction controller which stores gains as
-    flat (N, 6) tensors ``_kp`` and ``_kd``, with ``Kd = 2 * sqrt(Kp) * damping_ratio``.
-
-    Uses two scalars from the adversary action vector:
-        - stiffness_scale at action_stiffness_index
-        - damping_scale at action_damping_index
-    Both are clamped to the provided ranges and applied uniformly to all 6 DOFs.
-    """
-
-    if env_ids is None:
-        env_ids = torch.arange(env.scene.num_envs, device=env.device)
-
-    # Get the RelCartesianOSCAction term.
-    osc_term = env.action_manager._terms.get(osc_action_name)
-    if osc_term is None:
-        raise ValueError(f"Action term '{osc_action_name}' not found in action manager.")
-
-    # Read adversary outputs.
-    adv_raw = _get_action_term_raw_actions(env, adversary_action_name)
-    a = adv_raw[env_ids]
-
-    # Default gains from the action config (set in RelCartesianOSCAction.__init__).
-    kp_default = osc_term._kp_default  # (6,) tensor
-    dr_default = osc_term._damping_ratio_default  # (6,) tensor
-
-    # Clamp adversary-chosen scale factors.
-    stiff_scale = torch.clamp(
-        a[:, action_stiffness_index], stiffness_scale_range[0], stiffness_scale_range[1]
-    )
-    damp_scale = torch.clamp(
-        a[:, action_damping_index], damping_scale_range[0], damping_scale_range[1]
-    )
-
-    # Scale Kp uniformly across all 6 DOFs.
-    new_kp = kp_default.unsqueeze(0) * stiff_scale.unsqueeze(1)  # (N, 6)
-    # Scale damping ratio, then compute Kd = 2 * sqrt(Kp) * damping_ratio.
-    new_dr = dr_default.unsqueeze(0) * damp_scale.unsqueeze(1)  # (N, 6)
-    new_kd = 2.0 * torch.sqrt(new_kp) * new_dr
-
-    osc_term._kp[env_ids] = new_kp
-    osc_term._kd[env_ids] = new_kd
-
-
-def adversary_robot_material_from_action(
+def adversary_rigid_body_material_from_action(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
     action_name: str,
     asset_cfg: SceneEntityCfg,
     static_friction_range: tuple[float, float],
     dynamic_friction_range: tuple[float, float],
-    num_buckets: int = 256,
+    action_static_index: int,
+    action_dynamic_index: int,
     make_consistent: bool = True,
 ) -> None:
-    """Set robot material params from adversary action (reset-only).
+    """Set rigid-body material friction from adversary action (reset-only).
 
-    Expected action layout:
-        [0] static_friction (absolute)
-        [1] dynamic_friction (absolute)
+    Uses ``action_static_index`` / ``action_dynamic_index`` into the adversary action vector.
     """
 
     raw_actions = _get_action_term_raw_actions(env, action_name)
@@ -2489,8 +2432,12 @@ def adversary_robot_material_from_action(
 
     asset = env.scene[asset_cfg.name]
 
-    static_friction = torch.clamp(a[:, 0], static_friction_range[0], static_friction_range[1]).to("cpu")
-    dynamic_friction = torch.clamp(a[:, 1], dynamic_friction_range[0], dynamic_friction_range[1]).to("cpu")
+    static_friction = torch.clamp(
+        a[:, action_static_index], static_friction_range[0], static_friction_range[1]
+    ).to("cpu")
+    dynamic_friction = torch.clamp(
+        a[:, action_dynamic_index], dynamic_friction_range[0], dynamic_friction_range[1]
+    ).to("cpu")
     if make_consistent:
         dynamic_friction = torch.minimum(dynamic_friction, static_friction)
 
@@ -2502,19 +2449,16 @@ def adversary_robot_material_from_action(
     asset.root_physx_view.set_material_properties(materials, env_ids_cpu)
 
 
-def adversary_robot_mass_from_action(
+def adversary_rigid_body_mass_scale_from_action(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
     action_name: str,
     asset_cfg: SceneEntityCfg,
     mass_scale_range: tuple[float, float],
+    mass_scale_index: int,
     recompute_inertia: bool = True,
 ) -> None:
-    """Set robot mass scaling from adversary action (reset-only).
-
-    Expected action layout:
-        [2] robot_mass_scale
-    """
+    """Scale rigid-body masses from default using one adversary action index (reset-only)."""
 
     raw_actions = _get_action_term_raw_actions(env, action_name)
     env_ids_cpu = env_ids.cpu()
@@ -2531,7 +2475,7 @@ def adversary_robot_mass_from_action(
     masses = asset.root_physx_view.get_masses()
 
     masses[env_ids_cpu[:, None], body_ids] = asset.data.default_mass[env_ids_cpu[:, None], body_ids].clone()
-    mass_scale = torch.clamp(a[:, 2], mass_scale_range[0], mass_scale_range[1]).to("cpu")
+    mass_scale = torch.clamp(a[:, mass_scale_index], mass_scale_range[0], mass_scale_range[1]).to("cpu")
     masses[env_ids_cpu[:, None], body_ids] *= mass_scale.view(-1, 1)
     masses = torch.clamp(masses, min=1e-6)
 
@@ -2551,78 +2495,55 @@ def adversary_robot_mass_from_action(
         asset.root_physx_view.set_inertias(inertias, env_ids_cpu)
 
 
-def adversary_robot_joint_parameters_from_action(
+def adversary_rigid_body_mass_abs_from_action(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
     action_name: str,
     asset_cfg: SceneEntityCfg,
-    friction_scale_range: tuple[float, float],
-    armature_scale_range: tuple[float, float],
+    mass_range: tuple[float, float],
+    mass_index: int,
+    recompute_inertia: bool = True,
 ) -> None:
-    """Set robot joint friction/armature scaling from adversary action (reset-only).
+    """Set total rigid-body mass from adversary (reset-only).
 
-    Expected action layout:
-        [3] robot_joint_friction_scale
-        [4] robot_joint_armature_scale
+    Scales default body masses uniformly so the sum over ``body_ids`` equals the clamped
+    target mass (matches ``randomize_rigid_body_mass`` with ``operation="abs"`` intent).
     """
 
-    asset = env.scene[asset_cfg.name]
-    env_ids = env_ids.to(asset.device)
-
     raw_actions = _get_action_term_raw_actions(env, action_name)
+    env_ids_cpu = env_ids.cpu()
     env_ids_dev = env_ids.to(raw_actions.device)
     a = raw_actions[env_ids_dev]
 
-    if asset_cfg.joint_ids == slice(None):
-        joint_ids = slice(None)
+    asset = env.scene[asset_cfg.name]
+
+    if asset_cfg.body_ids == slice(None):
+        body_ids = torch.arange(asset.num_bodies, dtype=torch.int, device="cpu")
     else:
-        joint_ids = torch.tensor(asset_cfg.joint_ids, dtype=torch.int, device=asset.device)
+        body_ids = torch.tensor(asset_cfg.body_ids, dtype=torch.int, device="cpu")
 
-    if env_ids != slice(None) and joint_ids != slice(None):
-        env_ids_for_slice = env_ids[:, None]
-    else:
-        env_ids_for_slice = env_ids
+    masses = asset.root_physx_view.get_masses()
+    default_chunk = asset.data.default_mass[env_ids_cpu[:, None], body_ids].clone()
+    total_default = default_chunk.sum(dim=1, keepdim=True)
+    target_total = torch.clamp(a[:, mass_index], mass_range[0], mass_range[1]).to("cpu").view(-1, 1)
+    scale = target_total / torch.clamp(total_default, min=1e-9)
+    masses[env_ids_cpu[:, None], body_ids] = default_chunk * scale
+    masses = torch.clamp(masses, min=1e-6)
 
-    friction_scale = torch.clamp(a[:, 3], friction_scale_range[0], friction_scale_range[1]).to(asset.device)
-    armature_scale = torch.clamp(a[:, 4], armature_scale_range[0], armature_scale_range[1]).to(asset.device)
+    asset.root_physx_view.set_masses(masses, env_ids_cpu)
 
-    # Joint friction
-    friction_coeff = asset.data.default_joint_friction_coeff.clone()
-    friction_coeff[env_ids_for_slice, joint_ids] *= friction_scale.view(-1, 1)
-    friction_coeff = torch.clamp(friction_coeff, min=0.0)
-    static_friction_coeff = friction_coeff[env_ids_for_slice, joint_ids]
-
-    if get_isaac_sim_version().major >= 5:
-        dynamic_friction_coeff = asset.data.default_joint_dynamic_friction_coeff.clone()
-        viscous_friction_coeff = asset.data.default_joint_viscous_friction_coeff.clone()
-
-        dynamic_friction_coeff[env_ids_for_slice, joint_ids] *= friction_scale.view(-1, 1)
-        viscous_friction_coeff[env_ids_for_slice, joint_ids] *= friction_scale.view(-1, 1)
-
-        dynamic_friction_coeff = torch.clamp(dynamic_friction_coeff, min=0.0)
-        viscous_friction_coeff = torch.clamp(viscous_friction_coeff, min=0.0)
-
-        dynamic_friction_coeff = torch.minimum(dynamic_friction_coeff, friction_coeff)
-
-        dynamic_friction_coeff = dynamic_friction_coeff[env_ids_for_slice, joint_ids]
-        viscous_friction_coeff = viscous_friction_coeff[env_ids_for_slice, joint_ids]
-    else:
-        dynamic_friction_coeff = None
-        viscous_friction_coeff = None
-
-    asset.write_joint_friction_coefficient_to_sim(
-        joint_friction_coeff=static_friction_coeff,
-        joint_dynamic_friction_coeff=dynamic_friction_coeff,
-        joint_viscous_friction_coeff=viscous_friction_coeff,
-        joint_ids=joint_ids,
-        env_ids=env_ids,
-    )
-
-    # Joint armature
-    armature = asset.data.default_joint_armature.clone()
-    armature[env_ids_for_slice, joint_ids] *= armature_scale.view(-1, 1)
-    armature = torch.clamp(armature, min=0.0)
-    asset.write_joint_armature_to_sim(armature[env_ids_for_slice, joint_ids], joint_ids=joint_ids, env_ids=env_ids)
+    if recompute_inertia:
+        ratios = masses[env_ids_cpu[:, None], body_ids] / asset.data.default_mass[env_ids_cpu[:, None], body_ids]
+        inertias = asset.root_physx_view.get_inertias()
+        if isinstance(asset, Articulation):
+            inertias[env_ids_cpu[:, None], body_ids] = (
+                asset.data.default_inertia[env_ids_cpu[:, None], body_ids] * ratios[..., None]
+            )
+        else:
+            if ratios.ndim == 2 and ratios.shape[1] == 1:
+                ratios = ratios[:, 0]
+            inertias[env_ids_cpu] = asset.data.default_inertia[env_ids_cpu] * ratios.view(-1, 1)
+        asset.root_physx_view.set_inertias(inertias, env_ids_cpu)
 
 
 def adversary_gripper_actuator_gains_from_action(
@@ -2632,13 +2553,10 @@ def adversary_gripper_actuator_gains_from_action(
     asset_cfg: SceneEntityCfg,
     stiffness_scale_range: tuple[float, float],
     damping_scale_range: tuple[float, float],
+    action_stiffness_index: int = 5,
+    action_damping_index: int = 6,
 ) -> None:
-    """Set gripper actuator stiffness/damping scaling from adversary action (reset-only).
-
-    Expected action layout:
-        [5] gripper_stiffness_scale
-        [6] gripper_damping_scale
-    """
+    """Set gripper actuator stiffness/damping scaling from adversary action (reset-only)."""
 
     asset = env.scene[asset_cfg.name]
     env_ids = env_ids.to(asset.device)
@@ -2647,8 +2565,12 @@ def adversary_gripper_actuator_gains_from_action(
     env_ids_dev = env_ids.to(raw_actions.device)
     a = raw_actions[env_ids_dev]
 
-    stiffness_scale = torch.clamp(a[:, 5], stiffness_scale_range[0], stiffness_scale_range[1]).to(asset.device)
-    damping_scale = torch.clamp(a[:, 6], damping_scale_range[0], damping_scale_range[1]).to(asset.device)
+    stiffness_scale = torch.clamp(
+        a[:, action_stiffness_index], stiffness_scale_range[0], stiffness_scale_range[1]
+    ).to(asset.device)
+    damping_scale = torch.clamp(
+        a[:, action_damping_index], damping_scale_range[0], damping_scale_range[1]
+    ).to(asset.device)
 
     for actuator in asset.actuators.values():
         if isinstance(asset_cfg.joint_ids, slice):
@@ -2686,46 +2608,208 @@ def adversary_gripper_actuator_gains_from_action(
             asset.write_joint_damping_to_sim(damping, joint_ids=actuator.joint_indices, env_ids=env_ids)
 
 
-class AdversaryMultiResetManager(MultiResetManager):
-    """MultiResetManager with adversary-controlled reset type probabilities.
+class adversary_reset_root_states_from_action(ManagerTermBase):
+    """Reset asset root states using adversary action for x, y, yaw.
 
-    Inherits from the base MultiResetManager and overrides the probability
-    selection to use the adversary's action output (indices 9-12) as logits
-    for softmax probability computation over the 4 reset types.
+    The adversary outputs 3 values which are clamped to the pose ranges for
+    x, y, and yaw.  z, roll, pitch are fixed at their configured values
+    (typically 0).  The result is added to the asset's default root state
+    plus an optional offset asset, mirroring ``reset_root_states_uniform``.
     """
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
-        self._adversary_action_name: str | None = cfg.params.get("action_name", None)
-        self._adversary_prob_start_idx: int = cfg.params.get("action_prob_start_idx", 9)
-        self._min_prob: float = cfg.params.get("min_prob", 0.05)
         super().__init__(cfg, env)
+
+        pose_range_dict = cfg.params.get("pose_range")
+        self.pose_range = torch.tensor(
+            [pose_range_dict.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]],
+            device=env.device,
+        )
+        self.asset_cfgs = list(cfg.params.get("asset_cfgs", dict()).values())
+        self.offset_asset_cfg = cfg.params.get("offset_asset_cfg")
+        self.use_bottom_offset = cfg.params.get("use_bottom_offset", False)
+        self.action_name: str = cfg.params["action_name"]
+        self.action_x_index: int = cfg.params.get("action_x_index", 0)
+        self.action_y_index: int = cfg.params.get("action_y_index", 1)
+        self.action_yaw_index: int = cfg.params.get("action_yaw_index", 2)
+
+        if self.use_bottom_offset:
+            self.bottom_offset_positions = dict()
+            for asset_cfg in self.asset_cfgs:
+                asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+                usd_path = asset.cfg.spawn.usd_path
+                metadata = utils.read_metadata_from_usd_directory(usd_path)
+                bottom_offset = metadata.get("bottom_offset")
+                self.bottom_offset_positions[asset_cfg.name] = (
+                    torch.tensor(bottom_offset.get("pos"), device=env.device).unsqueeze(0).repeat(env.num_envs, 1)
+                )
 
     def __call__(
         self,
         env: ManagerBasedEnv,
         env_ids: torch.Tensor,
-        dataset_dir: str,
-        reset_types: list[str],
-        probs: list[float],
-        success: str | None = None,
-        action_name: str | None = None,
-        action_prob_start_idx: int = 9,
-        min_prob: float = 0.05,
+        pose_range: dict[str, tuple[float, float]],
+        asset_cfgs: dict[str, SceneEntityCfg] = dict(),
+        offset_asset_cfg: SceneEntityCfg = None,
+        use_bottom_offset: bool = False,
+        action_name: str = "adversaryaction",
+        action_x_index: int = 0,
+        action_y_index: int = 1,
+        action_yaw_index: int = 2,
     ) -> None:
-        # Override probabilities with adversary output before delegating to parent.
-        if self._adversary_action_name is not None:
-            raw_actions = _get_action_term_raw_actions(env, self._adversary_action_name)
-            prob_logits = raw_actions[
-                :, self._adversary_prob_start_idx : self._adversary_prob_start_idx + self.num_tasks
-            ]
-            prob_mean = prob_logits.mean(dim=0)
-            if prob_mean.abs().sum() < 1e-6:
-                # Adversary hasn't produced meaningful output yet; use default probs.
-                pass
-            else:
-                current_probs = torch.softmax(prob_mean, dim=0)
-                current_probs = torch.clamp(current_probs, min=self._min_prob)
-                self.probs = current_probs / current_probs.sum()
+        raw_actions = _get_action_term_raw_actions(env, self.action_name)
+        env_ids_dev = env_ids.to(raw_actions.device)
+        a = raw_actions[env_ids_dev]
 
-        # Delegate to parent which uses self.probs for sampling.
-        super().__call__(env, env_ids, dataset_dir, reset_types, probs, success)
+        # Clamp adversary outputs to pose ranges
+        x = torch.clamp(a[:, self.action_x_index], self.pose_range[0, 0], self.pose_range[0, 1])
+        y = torch.clamp(a[:, self.action_y_index], self.pose_range[1, 0], self.pose_range[1, 1])
+        yaw = torch.clamp(a[:, self.action_yaw_index], self.pose_range[5, 0], self.pose_range[5, 1])
+
+        # Fixed pose components
+        z = torch.full_like(x, (self.pose_range[2, 0] + self.pose_range[2, 1]) * 0.5)
+        roll = torch.full_like(x, (self.pose_range[3, 0] + self.pose_range[3, 1]) * 0.5)
+        pitch = torch.full_like(x, (self.pose_range[4, 0] + self.pose_range[4, 1]) * 0.5)
+
+        positions_offset = torch.stack([x, y, z], dim=-1)
+        orientations_delta = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
+
+        for asset_cfg in self.asset_cfgs:
+            asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+            root_states = asset.data.default_root_state[env_ids].clone()
+
+            positions = root_states[:, 0:3] + env.scene.env_origins[env_ids] + positions_offset
+
+            if self.offset_asset_cfg:
+                offset_asset: RigidObject | Articulation = env.scene[self.offset_asset_cfg.name]
+                offset_positions = offset_asset.data.default_root_state[env_ids].clone()
+                positions += offset_positions[:, 0:3]
+
+            if self.use_bottom_offset:
+                bottom_offset_position = self.bottom_offset_positions[asset_cfg.name]
+                positions -= bottom_offset_position[env_ids, 0:3]
+
+            orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
+            velocities = root_states[:, 7:13]
+
+            asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
+            asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
+
+
+class adversary_reset_insertive_from_assembled_offset(ManagerTermBase):
+    """Reset insertive object pose using partial assembly dataset as base + adversary offsets.
+
+    Samples a partial assembly state from a pre-recorded dataset (relative pose of the
+    insertive w.r.t. the receptive object), then applies adversary action values as
+    body-frame offsets on top.  Zero offsets → partial assembly state from dataset;
+    large offsets → displaced (e.g. on table).
+    """
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+
+        self.receptive_object_cfg = cfg.params.get("receptive_object_cfg")
+        self.receptive_object = env.scene[self.receptive_object_cfg.name]
+        self.insertive_object_cfg = cfg.params.get("insertive_object_cfg")
+        self.insertive_object = env.scene[self.insertive_object_cfg.name]
+
+        # Load partial assembly dataset (same as reset_insertive_object_from_partial_assembly_dataset)
+        dataset_dir: str = cfg.params.get("dataset_dir")
+        insertive_usd_path = self.insertive_object.cfg.spawn.usd_path
+        receptive_usd_path = self.receptive_object.cfg.spawn.usd_path
+        pair = utils.compute_pair_dir(insertive_usd_path, receptive_usd_path)
+        dataset_path = f"{dataset_dir}/Resets/{pair}/partial_assemblies.pt"
+
+        local_path = utils.safe_retrieve_file_path(dataset_path)
+        data = torch.load(local_path, map_location="cpu")
+
+        rel_pos = data.get("relative_position")
+        rel_quat = data.get("relative_orientation")
+        if rel_pos is None or rel_quat is None or len(rel_pos) == 0:
+            raise ValueError(f"No partial assembly data found in {dataset_path}")
+
+        if not isinstance(rel_pos, torch.Tensor):
+            rel_pos = torch.as_tensor(rel_pos, dtype=torch.float32)
+        if not isinstance(rel_quat, torch.Tensor):
+            rel_quat = torch.as_tensor(rel_quat, dtype=torch.float32)
+
+        self.rel_positions = rel_pos.to(env.device, dtype=torch.float32)
+        self.rel_quaternions = rel_quat.to(env.device, dtype=torch.float32)
+
+        # Parse pose_range_b for clamping adversary offsets
+        pose_range_b: dict[str, tuple[float, float]] = cfg.params.get("pose_range_b", dict())
+        range_list = [pose_range_b.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+        self.ranges = torch.tensor(range_list, device=env.device)
+
+        self.action_name: str = cfg.params["action_name"]
+        self.action_start_index: int = cfg.params.get("action_start_index", 3)
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        dataset_dir: str = "",
+        receptive_object_cfg: SceneEntityCfg = None,
+        insertive_object_cfg: SceneEntityCfg = None,
+        pose_range_b: dict[str, tuple[float, float]] = dict(),
+        action_name: str = "adversaryaction",
+        action_start_index: int = 3,
+    ) -> None:
+        num_envs = len(env_ids)
+
+        # 1. Get receptive object's current world pose (already reset by adversary)
+        receptive_pos_w = self.receptive_object.data.root_pos_w[env_ids]
+        receptive_quat_w = self.receptive_object.data.root_quat_w[env_ids]
+
+        # 2. Sample partial assembly states from dataset
+        assembly_indices = torch.randint(0, len(self.rel_positions), (num_envs,), device=env.device)
+        sampled_rel_pos = self.rel_positions[assembly_indices]
+        sampled_rel_quat = self.rel_quaternions[assembly_indices]
+
+        # Transform to world coordinates: T_insertive_w = T_receptive_w * T_relative
+        base_pos_w, base_quat_w = math_utils.combine_frame_transforms(
+            receptive_pos_w, receptive_quat_w, sampled_rel_pos, sampled_rel_quat
+        )
+
+        # 3. Split envs: 50% get adversary offsets, 50% keep raw dataset samples
+        adversary_mask = torch.rand(num_envs, device=env.device) < 0.5
+
+        insertive_pos_w = base_pos_w.clone()
+        insertive_quat_w = base_quat_w.clone()
+
+        if adversary_mask.any():
+            # Read adversary action values for the selected envs
+            raw_actions = _get_action_term_raw_actions(env, self.action_name)
+            env_ids_dev = env_ids.to(raw_actions.device)
+            a = raw_actions[env_ids_dev]
+            si = self.action_start_index
+            offset_values = a[adversary_mask, si : si + 6]
+
+            # Clamp to pose_range_b
+            clamped = torch.clamp(offset_values, self.ranges[:, 0], self.ranges[:, 1])
+
+            # Apply adversary offsets in body frame
+            offset_positions = clamped[:, 0:3]
+            offset_orientations = math_utils.quat_from_euler_xyz(clamped[:, 3], clamped[:, 4], clamped[:, 5])
+
+            adv_pos_w, adv_quat_w = math_utils.combine_frame_transforms(
+                base_pos_w[adversary_mask], base_quat_w[adversary_mask], offset_positions, offset_orientations
+            )
+
+            insertive_pos_w[adversary_mask] = adv_pos_w
+            insertive_quat_w[adversary_mask] = adv_quat_w
+
+        # 6. Write insertive root state to sim
+        self.insertive_object.write_root_state_to_sim(
+            root_state=torch.cat(
+                [
+                    insertive_pos_w,
+                    insertive_quat_w,
+                    torch.zeros((num_envs, 6), device=env.device),
+                ],
+                dim=-1,
+            ),
+            env_ids=env_ids,
+        )
+
+

@@ -20,6 +20,10 @@ from uwlab_rl.rsl_rl.rl_cfg import (
     RslRlFancyPpoAlgorithmCfg,
 )
 
+from uwlab_tasks.manager_based.manipulation.cage.mdp.actions.adversary_actions_cfg import (
+    ADVERSARY_POSE_ACTION_DIM,
+)
+
 
 def my_experts_observation_func(env):
     obs = env.unwrapped.obs_buf["expert_obs"]
@@ -110,7 +114,6 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
-    adversary_initial_reset_probs = [0.25, 0.25, 0.25, 0.25]
     policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -160,6 +163,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+    adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
 
 
 @configclass
@@ -177,7 +181,6 @@ class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
-    adversary_initial_reset_probs = [0.25, 0.25, 0.25, 0.25]
     policy = RslRlAsymmetricActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -230,6 +233,7 @@ class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+    adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
 
 
 @configclass
@@ -240,6 +244,7 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
     max_iterations = 40000
     save_interval = 100
     experiment_name = "cage_adversary_full_recurrent"
+    adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
@@ -247,7 +252,6 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
     adversary_obs_groups = {
         "policy": ["adversary_policy"],
     }
-    adversary_initial_reset_probs = [0.25, 0.25, 0.25, 0.25]
     policy = RslRLFancyActorCriticRecurrentCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
