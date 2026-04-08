@@ -257,8 +257,8 @@ class AdversaryBaseEventCfg:
             "receptive_object_cfg": SceneEntityCfg("receptive_object"),
             "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
             "pose_range_b": {
-                "x": (-0.3, 0.3),
-                "y": (-0.3, 0.3),
+                "x": (-0.2, 0.2),
+                "y": (-0.2, 0.2),
                 "z": (0.0, 0.3),
                 "roll": (-np.pi, np.pi),
                 "pitch": (-np.pi, np.pi),
@@ -266,6 +266,31 @@ class AdversaryBaseEventCfg:
             },
             "action_name": "adversaryaction",
             "action_start_index": 3,
+        },
+    )
+
+    reset_end_effector_pose = EventTerm(
+        func=task_mdp.adversary_reset_end_effector_from_action,
+        mode="reset",
+        params={
+            "fixed_asset_cfg": SceneEntityCfg("robot"),
+            "fixed_asset_offset": None,
+            "pose_range_b": {
+                "x": (0.3, 0.7),
+                "y": (-0.4, 0.5),
+                "z": (0.05, 0.5),
+                "roll": (-np.pi / 16, np.pi / 16),
+                "pitch": (np.pi / 4 - np.pi / 16, 3 * np.pi / 4 + np.pi / 16),
+                "yaw": (np.pi / 2 - np.pi / 16, 3 * np.pi / 2 + np.pi / 16),
+            },
+            "robot_ik_cfg": SceneEntityCfg(
+                "robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"], body_names="robotiq_base_link"
+            ),
+            "gripper_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
+            "gripper_range": (0.0, 0.785398),
+            "action_name": "adversaryaction",
+            "action_start_index": 9,
+            "gripper_action_index": 15,
         },
     )
 

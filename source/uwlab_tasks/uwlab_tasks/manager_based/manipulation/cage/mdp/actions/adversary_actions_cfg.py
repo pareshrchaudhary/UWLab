@@ -10,8 +10,9 @@ from isaaclab.utils import configclass
 from .adversary_actions import AdversaryAction
 
 
-# Receptive root: x, y, yaw (indices 0–2). Insertive offset: 6-D pose in body frame (3–8).
-ADVERSARY_POSE_ACTION_DIM = 9
+# Receptive root: x, y, yaw (0–2). Insertive offset: 6-D body frame (3–8).
+# EE world-frame pose: x, y, z, roll, pitch, yaw (9–14). Gripper finger_joint (15).
+ADVERSARY_POSE_ACTION_DIM = 16
 
 @configclass
 class AdversaryActionCfg(ActionTermCfg):

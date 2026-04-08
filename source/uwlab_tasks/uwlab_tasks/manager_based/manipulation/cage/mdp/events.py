@@ -2813,3 +2813,127 @@ class adversary_reset_insertive_from_assembled_offset(ManagerTermBase):
         )
 
 
+class adversary_reset_end_effector_from_action(ManagerTermBase):
+    """Reset end-effector pose and gripper state from adversary action.
+
+    The adversary outputs world-frame EE position and orientation (same approach as
+    ``reset_end_effector_round_fixed_asset``) plus a gripper finger_joint value.
+    Adversary values are clamped to the configured pose ranges, replacing random
+    uniform sampling.
+    """
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+
+        fixed_asset_cfg: SceneEntityCfg = cfg.params.get("fixed_asset_cfg")  # type: ignore
+        fixed_asset_offset: Offset = cfg.params.get("fixed_asset_offset")  # type: ignore
+        robot_ik_cfg: SceneEntityCfg = cfg.params.get("robot_ik_cfg", SceneEntityCfg("robot"))
+        gripper_cfg: SceneEntityCfg = cfg.params.get(
+            "gripper_cfg", SceneEntityCfg("robot", joint_names=["finger_joint"])
+        )
+
+        # Pose ranges for clamping EE position + orientation
+        pose_range_b: dict[str, tuple[float, float]] = cfg.params.get("pose_range_b")  # type: ignore
+        range_list = [pose_range_b.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+        self.ranges = torch.tensor(range_list, device=env.device)
+
+        # Gripper range
+        gripper_range: tuple[float, float] = cfg.params.get("gripper_range", (0.0, 0.785398))
+        self.gripper_range = torch.tensor(gripper_range, device=env.device)
+
+        # Fixed asset (robot base) for position offset
+        self.fixed_asset: Articulation | RigidObject = env.scene[fixed_asset_cfg.name]
+        self.fixed_asset_offset: Offset = fixed_asset_offset
+
+        # Robot and IK solver
+        self.robot: Articulation = env.scene[robot_ik_cfg.name]
+        self.joint_ids: list[int] | slice = robot_ik_cfg.joint_ids
+        self.n_joints: int = self.robot.num_joints if isinstance(self.joint_ids, slice) else len(self.joint_ids)
+
+        robot_ik_solver_cfg = DifferentialInverseKinematicsActionCfg(
+            asset_name=robot_ik_cfg.name,
+            joint_names=robot_ik_cfg.joint_names,  # type: ignore
+            body_name=robot_ik_cfg.body_names,  # type: ignore
+            controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
+            scale=1.0,
+        )
+        self.solver: DifferentialInverseKinematicsAction = robot_ik_solver_cfg.class_type(robot_ik_solver_cfg, env)  # type: ignore
+
+        # Gripper joint
+        self.gripper_joint_ids: list[int] | slice = gripper_cfg.joint_ids
+
+        # Action indices
+        self.action_name: str = cfg.params["action_name"]
+        self.action_start_index: int = cfg.params.get("action_start_index", 9)
+        self.gripper_action_index: int = cfg.params.get("gripper_action_index", 15)
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        fixed_asset_cfg: SceneEntityCfg = None,
+        fixed_asset_offset: Offset = None,
+        pose_range_b: dict[str, tuple[float, float]] = dict(),
+        robot_ik_cfg: SceneEntityCfg = None,
+        gripper_cfg: SceneEntityCfg = None,
+        gripper_range: tuple[float, float] = (0.0, 0.785398),
+        action_name: str = "adversaryaction",
+        action_start_index: int = 9,
+        gripper_action_index: int = 15,
+    ) -> None:
+        # Read adversary actions
+        raw_actions = _get_action_term_raw_actions(env, self.action_name)
+        env_ids_dev = env_ids.to(raw_actions.device)
+        a = raw_actions[env_ids_dev]
+
+        # Extract and clamp EE pose values (6 DOF)
+        si = self.action_start_index
+        ee_values = a[:, si : si + 6]
+        clamped = torch.clamp(ee_values, self.ranges[:, 0], self.ranges[:, 1])
+
+        # Compute EE world position (offset from fixed asset, same as reset_end_effector_round_fixed_asset)
+        if self.fixed_asset_offset is not None:
+            fixed_tip_pos_w, fixed_tip_quat_w = self.fixed_asset_offset.apply(self.fixed_asset)
+        else:
+            fixed_tip_pos_w = self.fixed_asset.data.root_pos_w
+            fixed_tip_quat_w = self.fixed_asset.data.root_quat_w
+
+        pos_w = fixed_tip_pos_w[env_ids] + clamped[:, 0:3]
+        quat_w = math_utils.quat_from_euler_xyz(clamped[:, 3], clamped[:, 4], clamped[:, 5])
+
+        # Transform to robot base frame
+        pos_b, quat_b = self.solver._compute_frame_pose()
+        pos_b[env_ids], quat_b[env_ids] = math_utils.subtract_frame_transforms(
+            self.robot.data.root_link_pos_w[env_ids],
+            self.robot.data.root_link_quat_w[env_ids],
+            pos_w,
+            quat_w,
+        )
+
+        # Solve IK iteratively (25 iterations, 0.25 damping)
+        self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
+        for i in range(25):
+            self.solver.apply_actions()
+            delta_joint_pos = 0.25 * (self.robot.data.joint_pos_target[env_ids] - self.robot.data.joint_pos[env_ids])
+            self.robot.write_joint_state_to_sim(
+                position=(delta_joint_pos + self.robot.data.joint_pos[env_ids])[:, self.joint_ids],
+                velocity=torch.zeros((len(env_ids), self.n_joints), device=env.device),
+                joint_ids=self.joint_ids,
+                env_ids=env_ids,  # type: ignore
+            )
+
+        # Write gripper joint state
+        gripper_value = torch.clamp(
+            a[:, self.gripper_action_index],
+            self.gripper_range[0],
+            self.gripper_range[1],
+        ).unsqueeze(-1)
+
+        self.robot.write_joint_state_to_sim(
+            position=gripper_value,
+            velocity=torch.zeros_like(gripper_value),
+            joint_ids=self.gripper_joint_ids,
+            env_ids=env_ids,
+        )
+
+
