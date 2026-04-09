@@ -55,7 +55,8 @@ x-default-uw-lab-volumes: &default-uw-lab-volumes
     source: ../tools
     target: ${DOCKER_UWLAB_PATH}/tools
   - type: bind
-    source: ../rsl_rl
+    # Same sibling layout as additional_contexts.rsl_rl (monorepo: cage/rsl_rl)
+    source: ../../rsl_rl
     target: ${DOCKER_UWLAB_PATH}/rsl_rl
   - type: bind
     source: ../../datasets
