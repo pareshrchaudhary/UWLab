@@ -94,9 +94,11 @@ RUN touch /bin/nvidia-smi && \
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
     ${UWLAB_PATH}/uwlab.sh --install
 
-# Install rsl_rl from the copied local tree (see COPY rsl_rl above)
+# Install rsl_rl from the copied local tree in editable mode so the runtime
+# bind-mount (docker-compose: ../../rsl_rl -> ${UWLAB_PATH}/rsl_rl) is always
+# used directly without requiring a rebuild when rsl_rl changes.
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
-    ${UWLAB_PATH}/uwlab.sh -p -m pip install ${UWLAB_PATH}/rsl_rl
+    ${UWLAB_PATH}/uwlab.sh -p -m pip install -e ${UWLAB_PATH}/rsl_rl
 
 # HACK: Remove install of quadprog dependency
 RUN ${UWLAB_PATH}/uwlab.sh -p -m pip uninstall -y quadprog
