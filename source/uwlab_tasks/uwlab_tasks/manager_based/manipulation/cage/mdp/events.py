@@ -2608,6 +2608,101 @@ def adversary_gripper_actuator_gains_from_action(
             asset.write_joint_damping_to_sim(damping, joint_ids=actuator.joint_indices, env_ids=env_ids)
 
 
+def adversary_joint_friction_armature_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    asset_cfg: SceneEntityCfg,
+    friction_scale_range: tuple[float, float],
+    armature_scale_range: tuple[float, float],
+    action_friction_index: int,
+    action_armature_index: int,
+) -> None:
+    """Scale joint friction and armature from adversary action (reset-only).
+
+    Reads two scalar indices from the adversary action vector, clamps them to the
+    given ranges, and multiplies the default joint friction / armature values.
+    """
+
+    raw_actions = _get_action_term_raw_actions(env, action_name)
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    env_ids = env_ids.to(asset.device)
+
+    friction_scale = torch.clamp(
+        a[:, action_friction_index], friction_scale_range[0], friction_scale_range[1]
+    ).to(asset.device)
+    armature_scale = torch.clamp(
+        a[:, action_armature_index], armature_scale_range[0], armature_scale_range[1]
+    ).to(asset.device)
+
+    if asset_cfg.joint_ids == slice(None):
+        joint_ids = slice(None)
+    else:
+        joint_ids = asset_cfg.joint_ids
+
+    # Friction: scale default values
+    default_friction = asset.data.default_joint_friction_coeff[env_ids]
+    if joint_ids != slice(None):
+        default_friction = default_friction[:, joint_ids]
+    new_friction = default_friction.clone() * friction_scale.view(-1, 1)
+    asset.write_joint_friction_coefficient_to_sim(new_friction, joint_ids=joint_ids, env_ids=env_ids)
+
+    # Armature: scale default values
+    default_armature = asset.data.default_joint_armature[env_ids]
+    if joint_ids != slice(None):
+        default_armature = default_armature[:, joint_ids]
+    new_armature = default_armature.clone() * armature_scale.view(-1, 1)
+    asset.write_joint_armature_to_sim(new_armature, joint_ids=joint_ids, env_ids=env_ids)
+
+
+def adversary_osc_gains_from_action(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    action_name: str,
+    adversary_action_name: str,
+    stiffness_scale_range: tuple[float, float],
+    damping_scale_range: tuple[float, float],
+    action_stiffness_index: int,
+    action_damping_index: int,
+) -> None:
+    """Scale OSC controller Kp/Kd from adversary action (reset-only).
+
+    Reads two scalar indices from the adversary action vector, clamps them,
+    and uniformly scales the default Kp and derives Kd via the default damping ratio.
+    """
+
+    from .actions.task_space_actions import RelCartesianOSCAction
+
+    raw_actions = _get_action_term_raw_actions(env, adversary_action_name)
+    env_ids_dev = env_ids.to(raw_actions.device)
+    a = raw_actions[env_ids_dev]
+
+    action_term = env.action_manager._terms.get(action_name)
+    if action_term is None or not isinstance(action_term, RelCartesianOSCAction):
+        raise ValueError(f"Action term '{action_name}' is not a RelCartesianOSCAction.")
+
+    env_ids = env_ids.to(action_term.device)
+
+    stiffness_scale = torch.clamp(
+        a[:, action_stiffness_index], stiffness_scale_range[0], stiffness_scale_range[1]
+    ).to(action_term.device)
+    damping_scale = torch.clamp(
+        a[:, action_damping_index], damping_scale_range[0], damping_scale_range[1]
+    ).to(action_term.device)
+
+    kp_default = action_term._kp_default  # (6,)
+    dr_default = action_term._damping_ratio_default  # (6,)
+
+    new_kp = kp_default.unsqueeze(0) * stiffness_scale.view(-1, 1)
+    new_dr = dr_default.unsqueeze(0) * damping_scale.view(-1, 1)
+
+    action_term._kp[env_ids] = new_kp
+    action_term._kd[env_ids] = 2.0 * torch.sqrt(new_kp) * new_dr
+
+
 class adversary_reset_root_states_from_action(ManagerTermBase):
     """Reset asset root states using adversary action for x, y, yaw.
 

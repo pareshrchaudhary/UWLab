@@ -27,7 +27,9 @@ from uwlab_assets.robots.ur5e_robotiq_gripper import IMPLICIT_UR5E_ROBOTIQ_2F85
 
 from uwlab_tasks.manager_based.manipulation.cage.config.ur5e_robotiq_2f85.actions import (
     UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION,
+    UR5E_ROBOTIQ_2F85_ADVERSARY_ADVANCED_ACTION,
     Ur5eRobotiq2f85AdversaryOSCAction,
+    Ur5eRobotiq2f85AdversaryAdvancedOSCAction,
     Ur5eRobotiq2f85RelativeOSCAction,
 )
 
@@ -296,6 +298,239 @@ class AdversaryBaseEventCfg:
 
 
 @configclass
+class AdversaryAdvancedEventCfg:
+    """Advanced adversary events: adversary controls friction, mass, joint and actuator
+    gains, and OSC gains while pose resets use standard randomization.
+
+    Action index map (18D total, ``ADVERSARY_ADVANCED_ACTION_DIM``):
+        0-1:   robot static/dynamic friction
+        2-3:   insertive object static/dynamic friction
+        4-5:   receptive object static/dynamic friction
+        6-7:   table static/dynamic friction
+        8:     robot mass scale
+        9:     insertive object mass (absolute)
+        10:    receptive object mass scale
+        11:    table mass scale
+        12:    robot joint friction scale
+        13:    robot joint armature scale
+        14:    gripper stiffness scale
+        15:    gripper damping scale
+        16:    OSC stiffness scale
+        17:    OSC damping scale
+    """
+
+    # --- Adversary-controlled friction ---
+
+    adversary_robot_material = EventTerm(
+        func=task_mdp.adversary_rigid_body_material_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("robot"),
+            "static_friction_range": (0.05, 1.0),
+            "dynamic_friction_range": (0.05, 1.0),
+            "action_static_index": 0,
+            "action_dynamic_index": 1,
+            "make_consistent": True,
+        },
+    )
+
+    adversary_insertive_object_material = EventTerm(
+        func=task_mdp.adversary_rigid_body_material_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("insertive_object"),
+            "static_friction_range": (0.05, 1.0),
+            "dynamic_friction_range": (0.05, 1.0),
+            "action_static_index": 2,
+            "action_dynamic_index": 3,
+            "make_consistent": True,
+        },
+    )
+
+    adversary_receptive_object_material = EventTerm(
+        func=task_mdp.adversary_rigid_body_material_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("receptive_object"),
+            "static_friction_range": (0.05, 1.0),
+            "dynamic_friction_range": (0.05, 1.0),
+            "action_static_index": 4,
+            "action_dynamic_index": 5,
+            "make_consistent": True,
+        },
+    )
+
+    adversary_table_material = EventTerm(
+        func=task_mdp.adversary_rigid_body_material_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("table"),
+            "static_friction_range": (0.05, 1.0),
+            "dynamic_friction_range": (0.05, 1.0),
+            "action_static_index": 6,
+            "action_dynamic_index": 7,
+            "make_consistent": True,
+        },
+    )
+
+    # --- Adversary-controlled mass ---
+
+    adversary_robot_mass = EventTerm(
+        func=task_mdp.adversary_rigid_body_mass_scale_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("robot"),
+            "mass_scale_range": (0.5, 2.0),
+            "mass_scale_index": 8,
+        },
+    )
+
+    adversary_insertive_object_mass = EventTerm(
+        func=task_mdp.adversary_rigid_body_mass_abs_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("insertive_object"),
+            "mass_range": (0.005, 0.1),
+            "mass_index": 9,
+        },
+    )
+
+    adversary_receptive_object_mass = EventTerm(
+        func=task_mdp.adversary_rigid_body_mass_scale_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("receptive_object"),
+            "mass_scale_range": (0.5, 2.0),
+            "mass_scale_index": 10,
+        },
+    )
+
+    adversary_table_mass = EventTerm(
+        func=task_mdp.adversary_rigid_body_mass_scale_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("table"),
+            "mass_scale_range": (0.5, 2.0),
+            "mass_scale_index": 11,
+        },
+    )
+
+    # --- Adversary-controlled joint dynamics ---
+
+    adversary_robot_joint_params = EventTerm(
+        func=task_mdp.adversary_joint_friction_armature_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("robot"),
+            "friction_scale_range": (0.5, 2.0),
+            "armature_scale_range": (0.5, 2.0),
+            "action_friction_index": 12,
+            "action_armature_index": 13,
+        },
+    )
+
+    # --- Adversary-controlled gripper actuator gains ---
+
+    adversary_gripper_gains = EventTerm(
+        func=task_mdp.adversary_gripper_actuator_gains_from_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
+            "stiffness_scale_range": (0.5, 2.0),
+            "damping_scale_range": (0.5, 2.0),
+            "action_stiffness_index": 14,
+            "action_damping_index": 15,
+        },
+    )
+
+    # --- Adversary-controlled OSC gains ---
+
+    adversary_osc_gains = EventTerm(
+        func=task_mdp.adversary_osc_gains_from_action,
+        mode="reset",
+        params={
+            "action_name": "arm",
+            "adversary_action_name": "adversaryaction",
+            "stiffness_scale_range": (0.5, 2.0),
+            "damping_scale_range": (0.5, 2.0),
+            "action_stiffness_index": 16,
+            "action_damping_index": 17,
+        },
+    )
+
+    # --- Standard pose resets (not adversary-controlled) ---
+
+    reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
+
+    reset_receptive_object_pose = EventTerm(
+        func=task_mdp.reset_root_states_uniform,
+        mode="reset",
+        params={
+            "pose_range": {
+                "x": (0.3, 0.55),
+                "y": (-0.1, 0.3),
+                "z": (0.0, 0.0),
+                "roll": (0.0, 0.0),
+                "pitch": (0.0, 0.0),
+                "yaw": (-np.pi / 12, np.pi / 12),
+            },
+            "velocity_range": {},
+            "asset_cfgs": {"receptive_object": SceneEntityCfg("receptive_object")},
+            "offset_asset_cfg": SceneEntityCfg("ur5_metal_support"),
+            "use_bottom_offset": True,
+        },
+    )
+
+    reset_insertive_object = EventTerm(
+        func=task_mdp.reset_insertive_object_from_partial_assembly_dataset,
+        mode="reset",
+        params={
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
+            "pose_range_b": {
+                "x": (-0.2, 0.2),
+                "y": (-0.2, 0.2),
+                "z": (0.0, 0.3),
+                "roll": (-np.pi, np.pi),
+                "pitch": (-np.pi, np.pi),
+                "yaw": (-np.pi, np.pi),
+            },
+        },
+    )
+
+    reset_end_effector_pose = EventTerm(
+        func=task_mdp.reset_end_effector_round_fixed_asset,
+        mode="reset",
+        params={
+            "fixed_asset_cfg": SceneEntityCfg("robot"),
+            "fixed_asset_offset": None,
+            "pose_range_b": {
+                "x": (0.3, 0.7),
+                "y": (-0.4, 0.5),
+                "z": (0.05, 0.5),
+                "roll": (-np.pi / 16, np.pi / 16),
+                "pitch": (np.pi / 4 - np.pi / 16, 3 * np.pi / 4 + np.pi / 16),
+                "yaw": (np.pi / 2 - np.pi / 16, 3 * np.pi / 2 + np.pi / 16),
+            },
+            "robot_ik_cfg": SceneEntityCfg(
+                "robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"], body_names="robotiq_base_link"
+            ),
+        },
+    )
+
+
+@configclass
 class CommandsCfg:
     """Command specifications for the MDP."""
 
@@ -487,8 +722,23 @@ class AdversaryPolicyCfg(ObsGroup):
 
 
 @configclass
+class AdversaryAdvancedPolicyCfg(ObsGroup):
+    """Advanced adversary actor observations (bandit-style: noise input only, 18D)."""
+
+    noise = ObsTerm(
+        func=task_mdp.adversary_noise,
+        params={"dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ADVANCED_ACTION.action_dim},
+    )
+
+    def __post_init__(self):
+        self.enable_corruption = False
+        self.concatenate_terms = True
+        self.history_length = 1
+
+
+@configclass
 class MARLObservationsCfg:
-    """Combined observation groups for MARL training.
+    """Combined observation groups for MARL training (pose adversary).
 
     Keys in obs_buf:
         - "policy": policy actor observations (with adversary action stripped from prev_actions)
@@ -499,6 +749,21 @@ class MARLObservationsCfg:
     policy: ObservationsCfg.PolicyCfg = ObservationsCfg.PolicyCfg()
     critic: ObservationsCfg.CriticCfg = ObservationsCfg.CriticCfg()
     adversary_policy: AdversaryPolicyCfg = AdversaryPolicyCfg()
+
+
+@configclass
+class AdversaryAdvancedMARLObservationsCfg:
+    """Combined observation groups for MARL training (AdversaryAdvancedEventCfg).
+
+    Keys in obs_buf:
+        - "policy": policy actor observations (with adversary action stripped from prev_actions)
+        - "critic": policy critic observations
+        - "adversary_policy": advanced adversary actor observations (noise only, 18D)
+    """
+
+    policy: ObservationsCfg.PolicyCfg = ObservationsCfg.PolicyCfg()
+    critic: ObservationsCfg.CriticCfg = ObservationsCfg.CriticCfg()
+    adversary_policy: AdversaryAdvancedPolicyCfg = AdversaryAdvancedPolicyCfg()
 
 
 @configclass
@@ -665,9 +930,23 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
 
 @configclass
 class Ur5eRobotiq2f85AdversaryTrainCfg(Ur5eRobotiq2f85RlStateCfg):
-    """CAGE adversarial training: policy + adversary MARL with implicit actuator."""
+    """CAGE adversarial training: policy + pose adversary MARL with implicit actuator."""
 
     events: AdversaryBaseEventCfg = AdversaryBaseEventCfg()
     actions: Ur5eRobotiq2f85AdversaryOSCAction = Ur5eRobotiq2f85AdversaryOSCAction()
     observations: MARLObservationsCfg = MARLObservationsCfg()
+    curriculum: NoCurriculumsCfg = NoCurriculumsCfg()
+
+
+@configclass
+class Ur5eRobotiq2f85AdversaryAdvancedTrainCfg(Ur5eRobotiq2f85RlStateCfg):
+    """CAGE adversarial training: policy + AdversaryAdvancedEventCfg (parameter adversary) MARL.
+
+    The adversary controls 18 parameters (friction, mass, actuator gains,
+    OSC gains) while poses are reset with standard randomization.
+    """
+
+    events: AdversaryAdvancedEventCfg = AdversaryAdvancedEventCfg()
+    actions: Ur5eRobotiq2f85AdversaryAdvancedOSCAction = Ur5eRobotiq2f85AdversaryAdvancedOSCAction()
+    observations: AdversaryAdvancedMARLObservationsCfg = AdversaryAdvancedMARLObservationsCfg()
     curriculum: NoCurriculumsCfg = NoCurriculumsCfg()

@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from dataclasses import MISSING
-from typing import Literal
+from typing import Callable, Literal, Optional
 
 from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlBaseRunnerCfg, RslRlPpoActorCriticRecurrentCfg  # noqa: F401
@@ -159,20 +159,32 @@ class RslRlMARLRunnerCfg(RslRlBaseRunnerCfg):
 
     policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
     """The policy configuration."""
+
     algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration."""
 
     adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
     """The policy configuration for the adversary."""
+
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
+
     adversary_robot_parameters: int = MISSING  # type: ignore
-    """Number of robot domain randomization parameters controlled by the adversary."""
+    """Number of action dimensions controlled by the adversary."""
+
+    adversary_parameter_names: list[str] = MISSING  # type: ignore
+    """Names for adversary-controlled parameters; stored as HDF5 ``param_names`` when recording."""
+
+    adversary_param_extractor_fn: Optional[Callable] = None
+    """Callable: (env, device, is_distributed, world_size, rank) -> Tensor(num_envs, N).
+    Extracts current adversary-chosen parameters for HDF5 recording."""
+
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
     If regex expression, the latest (alphabetical order) matching run will be loaded.
     """
+
     load_checkpoint: str = "model_.*.pt"
     """The checkpoint file to load. Default is ``"model_.*.pt"`` (all).
 
@@ -194,20 +206,32 @@ class RslRlMARLRecurrentRunnerCfg(RslRlBaseRunnerCfg):
 
     policy: RslRlAsymmetricActorCriticCfg = MISSING  # type: ignore
     """The policy configuration."""
-    algorithm: RslRlPpoAlgorithmCfg = MISSING
+
+    algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration."""
 
     adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
     """The policy configuration for the adversary."""
+
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
+
     adversary_robot_parameters: int = MISSING  # type: ignore
-    """Number of robot domain randomization parameters controlled by the adversary."""
+    """Number of action dimensions controlled by the adversary."""
+
+    adversary_parameter_names: list[str] = MISSING  # type: ignore
+    """Names for adversary-controlled parameters; stored as HDF5 ``param_names`` when recording."""
+
+    adversary_param_extractor_fn: Optional[Callable] = None
+    """Callable: (env, device, is_distributed, world_size, rank) -> Tensor(num_envs, N).
+    Extracts current adversary-chosen parameters for HDF5 recording."""
+
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
     If regex expression, the latest (alphabetical order) matching run will be loaded.
     """
+
     load_checkpoint: str = "model_.*.pt"
     """The checkpoint file to load. Default is ``"model_.*.pt"`` (all).
 
@@ -229,20 +253,32 @@ class RslRlMARLFullRecurrentRunnerCfg(RslRlBaseRunnerCfg):
 
     policy: RslRLFancyActorCriticRecurrentCfg = MISSING  # type: ignore
     """The policy configuration."""
-    algorithm: RslRlPpoAlgorithmCfg = MISSING
+
+    algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration."""
 
     adversary_policy: RslRlFancyActorCriticCfg = MISSING  # type: ignore
     """The policy configuration for the adversary."""
+
     adversary_algorithm: RslRlPpoAlgorithmCfg = MISSING  # type: ignore
     """The algorithm configuration for the adversary."""
+
     adversary_robot_parameters: int = MISSING  # type: ignore
-    """Number of domain randomization scalars controlled by the adversary (env action tail)."""
+    """Number of action dimensions controlled by the adversary."""
+
+    adversary_parameter_names: list[str] = MISSING  # type: ignore
+    """Names for adversary-controlled parameters; stored as HDF5 ``param_names`` when recording."""
+
+    adversary_param_extractor_fn: Optional[Callable] = None
+    """Callable: (env, device, is_distributed, world_size, rank) -> Tensor(num_envs, N).
+    Extracts current adversary-chosen parameters for HDF5 recording."""
+
     load_run: str = ".*"
     """The run directory to load. Default is ".*" (all).
 
     If regex expression, the latest (alphabetical order) matching run will be loaded.
     """
+
     load_checkpoint: str = "model_.*.pt"
     """The checkpoint file to load. Default is ``"model_.*.pt"`` (all).
 

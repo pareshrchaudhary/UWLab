@@ -269,6 +269,21 @@ gym.register(
 
 
 # =============================================================================
+# CAGE AdversaryAdvancedEventCfg environments
+# =============================================================================
+
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-AdversaryAdvancedEvent-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryAdvancedTrainCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AdversaryAdvancedRunner",
+    },
+)
+
+
+# =============================================================================
 # CAGE Recurrent Environments
 # =============================================================================
 

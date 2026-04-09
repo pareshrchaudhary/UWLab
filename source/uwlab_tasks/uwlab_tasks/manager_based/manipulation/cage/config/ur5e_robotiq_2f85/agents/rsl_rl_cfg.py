@@ -20,9 +20,24 @@ from uwlab_rl.rsl_rl.rl_cfg import (
     RslRlFancyPpoAlgorithmCfg,
 )
 
+from rsl_rl.utils.logger import extract_cage_physics_params
+
 from uwlab_tasks.manager_based.manipulation.cage.mdp.actions.adversary_actions_cfg import (
+    ADVERSARY_ADVANCED_ACTION_DIM,
     ADVERSARY_POSE_ACTION_DIM,
 )
+
+CAGE_ADVERSARY_PARAMETER_NAMES = [
+    "robot_static_friction", "robot_dynamic_friction",
+    "insertive_object_static_friction", "insertive_object_dynamic_friction",
+    "receptive_object_static_friction", "receptive_object_dynamic_friction",
+    "table_static_friction", "table_dynamic_friction",
+    "robot_mass_scale", "insertive_object_mass_scale",
+    "receptive_object_mass_scale", "table_mass_scale",
+    "robot_joint_friction_scale", "robot_joint_armature_scale",
+    "gripper_stiffness_scale", "gripper_damping_scale",
+    "osc_stiffness_scale", "osc_damping_scale",
+]
 
 
 def my_experts_observation_func(env):
@@ -164,6 +179,8 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
         max_grad_norm=1.0,
     )
     adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
+    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
+    adversary_param_extractor_fn = extract_cage_physics_params
 
 
 @configclass
@@ -234,6 +251,8 @@ class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
         max_grad_norm=1.0,
     )
     adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
+    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
+    adversary_param_extractor_fn = extract_cage_physics_params
 
 
 @configclass
@@ -245,6 +264,8 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
     save_interval = 100
     experiment_name = "cage_adversary_full_recurrent"
     adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
+    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
+    adversary_param_extractor_fn = extract_cage_physics_params
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
@@ -302,3 +323,77 @@ class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+# =============================================================================
+# AdversaryAdvancedEventCfg runner (parameter adversary MARL)
+# =============================================================================
+
+
+@configclass
+class AdversaryAdvancedRunner(RslRlMARLRunnerCfg):
+    class_name: str = "MultiAgentRunner"
+    num_steps_per_env = 32
+    adversary_update_every_k_episodes = 5
+    max_iterations = 40000
+    save_interval = 100
+    experiment_name = "cage_adversary_advanced"
+    obs_groups = {
+        "policy": ["policy"],
+        "critic": ["critic"],
+    }
+    adversary_obs_groups = {
+        "policy": ["adversary_policy"],
+    }
+    policy = RslRlFancyActorCriticCfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
+        actor_hidden_dims=[512, 256, 128, 64],
+        critic_hidden_dims=[512, 256, 128, 64],
+        activation="elu",
+        noise_std_type="gsde",
+        state_dependent_std=False,
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        normalize_advantage_per_mini_batch=False,
+        clip_param=0.2,
+        entropy_coef=0.006,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+
+    # Advanced adversary policy and algorithm
+    adversary_policy = RslRlFancyActorCriticCfg(
+        init_noise_std=1.0,
+        actor_obs_normalization=True,
+        actor_hidden_dims=[128, 64, 32],
+        critic_obs_normalization=False,
+        critic_hidden_dims=[1],
+        activation="elu",
+        noise_std_type="log",
+        state_dependent_std=False,
+    )
+    adversary_algorithm = RslRlPpoAlgorithmCfg(
+        class_name="SimplePPO",
+        normalize_advantage_per_mini_batch=False,
+        clip_param=0.2,
+        entropy_coef=0.006,
+        num_learning_epochs=1,
+        num_mini_batches=1,
+        learning_rate=1.0e-4,
+        schedule="fixed",
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
+    adversary_robot_parameters = ADVERSARY_ADVANCED_ACTION_DIM
+    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
+    adversary_param_extractor_fn = extract_cage_physics_params

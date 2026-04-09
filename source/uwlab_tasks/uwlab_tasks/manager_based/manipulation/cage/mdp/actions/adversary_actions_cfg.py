@@ -14,6 +14,14 @@ from .adversary_actions import AdversaryAction
 # EE world-frame pose: x, y, z, roll, pitch, yaw (9–14). Gripper finger_joint (15).
 ADVERSARY_POSE_ACTION_DIM = 16
 
+# Parameter adversary (AdversaryAdvancedEventCfg): friction, mass, joint/actuator/OSC gains (18 total).
+# Friction: robot(0-1), insertive(2-3), receptive(4-5), table(6-7) — static, dynamic each.
+# Mass scale: robot(8), insertive(9), receptive(10), table(11).
+# Joint dynamics: friction_scale(12), armature_scale(13).
+# Gripper actuator: stiffness_scale(14), damping_scale(15).
+# OSC gains: stiffness_scale(16), damping_scale(17).
+ADVERSARY_ADVANCED_ACTION_DIM = 18
+
 @configclass
 class AdversaryActionCfg(ActionTermCfg):
     """Storage-only action term for adversary outputs."""

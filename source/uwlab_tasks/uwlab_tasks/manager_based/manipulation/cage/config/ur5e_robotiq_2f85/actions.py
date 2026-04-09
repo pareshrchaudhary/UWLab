@@ -10,7 +10,7 @@ from isaaclab.utils import configclass
 from uwlab_assets.robots.ur5e_robotiq_gripper.actions import ROBOTIQ_GRIPPER_BINARY_ACTIONS
 
 from ...mdp.actions.actions_cfg import RelCartesianOSCActionCfg
-from ...mdp.actions.adversary_actions_cfg import ADVERSARY_POSE_ACTION_DIM, AdversaryActionCfg
+from ...mdp.actions.adversary_actions_cfg import ADVERSARY_ADVANCED_ACTION_DIM, ADVERSARY_POSE_ACTION_DIM, AdversaryActionCfg
 
 # Pre-train gains (soft initial Kp; curriculum ramps to stiff terminal)
 UR5E_ROBOTIQ_2F85_RELATIVE_OSC = RelCartesianOSCActionCfg(
@@ -76,8 +76,21 @@ UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION = AdversaryActionCfg(action_dim=ADVERSARY_POS
 
 @configclass
 class Ur5eRobotiq2f85AdversaryOSCAction:
-    """Action config for CAGE adversarial training: arm OSC + binary gripper + adversary."""
+    """Action config for CAGE adversarial training: arm OSC + binary gripper + pose adversary."""
 
     arm = UR5E_ROBOTIQ_2F85_RELATIVE_OSC
     gripper = ROBOTIQ_GRIPPER_BINARY_ACTIONS
     adversaryaction = UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION
+
+
+# Advanced adversary action config (AdversaryAdvancedEventCfg: friction, mass, actuator gains, OSC gains)
+UR5E_ROBOTIQ_2F85_ADVERSARY_ADVANCED_ACTION = AdversaryActionCfg(action_dim=ADVERSARY_ADVANCED_ACTION_DIM)
+
+
+@configclass
+class Ur5eRobotiq2f85AdversaryAdvancedOSCAction:
+    """Action config for CAGE advanced-adversary training: arm OSC + binary gripper + parameter adversary."""
+
+    arm = UR5E_ROBOTIQ_2F85_RELATIVE_OSC
+    gripper = ROBOTIQ_GRIPPER_BINARY_ACTIONS
+    adversaryaction = UR5E_ROBOTIQ_2F85_ADVERSARY_ADVANCED_ACTION
