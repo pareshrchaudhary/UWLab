@@ -867,7 +867,7 @@ class GenerationTerminationCfg:
             "max_robot_pos_deviation": 0.025,
             "max_object_pos_deviation": 0.025,
             "pos_z_threshold": -0.01,
-            "consecutive_stability_steps": 15,
+            "consecutive_stability_steps": 5,
         },
         time_out=True,
     )
