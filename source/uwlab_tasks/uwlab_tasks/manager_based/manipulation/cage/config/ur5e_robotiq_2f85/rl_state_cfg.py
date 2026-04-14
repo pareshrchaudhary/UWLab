@@ -230,7 +230,7 @@ class AdversaryBaseEventCfg:
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
 
     reset_receptive_object_pose = EventTerm(
-        func=task_mdp.adversary_reset_root_states_from_action,
+        func=task_mdp.adversary_reset_receptive_object_pose_from_action,
         mode="reset",
         params={
             "pose_range": {
@@ -252,7 +252,7 @@ class AdversaryBaseEventCfg:
     )
 
     reset_insertive_object = EventTerm(
-        func=task_mdp.adversary_reset_insertive_from_assembled_offset,
+        func=task_mdp.adversary_reset_insertive_object_pose_from_assembled_offset,
         mode="reset",
         params={
             "insertive_object_cfg": SceneEntityCfg("insertive_object"),
@@ -294,6 +294,15 @@ class AdversaryBaseEventCfg:
             "action_start_index": 9,
             "gripper_action_index": 15,
         },
+    )
+
+    # Runs LAST: loads full scene state from buffer during Phase B policy training.
+    # No-op during Phase A generation (buffer detached/empty), so the adversary
+    # reset events above take effect instead.
+    reset_from_buffer = EventTerm(
+        func=task_mdp.reset_from_state_buffer,
+        mode="reset",
+        params={},
     )
 
 
@@ -818,6 +827,51 @@ class TerminationsCfg:
 
     abnormal_robot = DoneTerm(func=task_mdp.abnormal_robot_state)
 
+@configclass
+class GenerationTerminationCfg:
+    """Termination for adversary generation episodes — uses check_reset_state_success."""
+
+    time_out = DoneTerm(func=task_mdp.time_out, time_out=True)
+
+    abnormal_robot = DoneTerm(func=task_mdp.abnormal_robot_state)
+
+    success = DoneTerm(
+        func=task_mdp.check_reset_state_success,
+        params={
+            "object_cfgs": [SceneEntityCfg("insertive_object"), SceneEntityCfg("receptive_object")],
+            "robot_cfg": SceneEntityCfg("robot"),
+            "ee_body_name": "robotiq_base_link",
+            "collision_analyzer_cfgs": [
+                task_mdp.CollisionAnalyzerCfg(
+                    num_points=1024,
+                    max_dist=0.5,
+                    min_dist=-0.0005,
+                    asset_cfg=SceneEntityCfg("robot"),
+                    obstacle_cfgs=[SceneEntityCfg("insertive_object")],
+                ),
+                task_mdp.CollisionAnalyzerCfg(
+                    num_points=1024,
+                    max_dist=0.5,
+                    min_dist=0.0,
+                    asset_cfg=SceneEntityCfg("robot"),
+                    obstacle_cfgs=[SceneEntityCfg("receptive_object")],
+                ),
+                task_mdp.CollisionAnalyzerCfg(
+                    num_points=1024,
+                    max_dist=0.5,
+                    min_dist=-0.001,
+                    asset_cfg=SceneEntityCfg("insertive_object"),
+                    obstacle_cfgs=[SceneEntityCfg("receptive_object")],
+                ),
+            ],
+            "max_robot_pos_deviation": 0.025,
+            "max_object_pos_deviation": 0.025,
+            "pos_z_threshold": -0.01,
+            "consecutive_stability_steps": 15,
+        },
+        time_out=True,
+    )
+
 
 @configclass
 class NoCurriculumsCfg:
@@ -930,13 +984,19 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
 
 @configclass
 class Ur5eRobotiq2f85AdversaryTrainCfg(Ur5eRobotiq2f85RlStateCfg):
-    """CAGE adversarial training: policy + pose adversary MARL with implicit actuator."""
+    """CAGE adversarial training: policy + pose adversary MARL with implicit actuator.
+
+    Uses ``GenerationTerminationCfg`` so the runner's Phase A can detect validated
+    reset states via ``check_reset_state_success``. The runner temporarily overrides
+    ``episode_length_s`` down to the generation length during Phase A and restores
+    the natural training length for Phase B.
+    """
 
     events: AdversaryBaseEventCfg = AdversaryBaseEventCfg()
     actions: Ur5eRobotiq2f85AdversaryOSCAction = Ur5eRobotiq2f85AdversaryOSCAction()
     observations: MARLObservationsCfg = MARLObservationsCfg()
     curriculum: NoCurriculumsCfg = NoCurriculumsCfg()
-
+    terminations: GenerationTerminationCfg = GenerationTerminationCfg()
 
 @configclass
 class Ur5eRobotiq2f85AdversaryAdvancedTrainCfg(Ur5eRobotiq2f85RlStateCfg):

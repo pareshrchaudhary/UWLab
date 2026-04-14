@@ -4,15 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab.utils import configclass
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
-from uwlab_rl.rsl_rl import (
-    RslRlAsymmetricActorCriticCfg,
-    RslRlMARLFullRecurrentRunnerCfg,
-    RslRlMARLRecurrentRunnerCfg,
-    RslRlMARLRunnerCfg,
-    RslRLFancyActorCriticRecurrentCfg,
-)
+from uwlab_rl.rsl_rl import RslRlMARLRunnerCfg
 from uwlab_rl.rsl_rl.rl_cfg import (
     BehaviorCloningCfg,
     OffPolicyAlgorithmCfg,
@@ -110,18 +104,34 @@ class Base_DAggerRunnerCfg(Base_PPORunnerCfg):
 
 
 # =============================================================================
-# CAGE Adversary MARL Runner Configs
+# Adversary Base Runner
 # =============================================================================
 
 
 @configclass
-class MultiAgentRunner(RslRlMARLRunnerCfg):
+class AdversaryBaseRunner(RslRlBaseRunnerCfg):
+    """Runner for adversary reset state generation + policy training.
+
+    Uses MultiAgentRunner which alternates between:
+    - Generation loop: adversary proposes states, physics settles, valid → buffer
+    - Training loop: policy trains on buffer-loaded states, regret → adversary
+    """
+
     class_name: str = "MultiAgentRunner"
     num_steps_per_env = 32
-    adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
-    experiment_name = "cage_adversary"
+    experiment_name = "cage_adversary_base"
+
+    # Generation-specific config
+    generation_max_steps: int = 1000  # ~50 episode cycles at 20 steps/episode
+    generation_episode_length_s: float = 2.0  # Phase A override; Phase B uses the env's natural episode_length_s
+    adversary_update_every_n_episodes: int = 5
+    # Scale on gen_reward in the combined adversary reward:
+    #   adv_reward[i] = beta_gen_reward * gen_reward[i] + regret[i]
+    # 0.0 disables gen_reward shaping entirely (regret-only curriculum signal).
+    beta_gen_reward: float = 1.0
+
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
@@ -155,7 +165,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
         max_grad_norm=1.0,
     )
 
-    # Adversary policy and algorithm (one-step bandit-style)
+    # Adversary policy and algorithm (bandit-style)
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -170,7 +180,7 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
         class_name="SimplePPO",
         normalize_advantage_per_mini_batch=False,
         clip_param=0.2,
-        entropy_coef=0.006,
+        entropy_coef=0.05,  # bumped from 0.006 to maintain exploration spread
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
@@ -181,148 +191,6 @@ class MultiAgentRunner(RslRlMARLRunnerCfg):
     adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
     adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
     adversary_param_extractor_fn = extract_cage_physics_params
-
-
-@configclass
-class MultiAgentRecurrentRunner(RslRlMARLRecurrentRunnerCfg):
-    class_name: str = "MultiAgentRunner"
-    num_steps_per_env = 32
-    adversary_update_every_k_episodes = 5
-    max_iterations = 40000
-    save_interval = 100
-    experiment_name = "cage_adversary_recurrent"
-    obs_groups = {
-        "policy": ["policy"],
-        "critic": ["critic"],
-    }
-    adversary_obs_groups = {
-        "policy": ["adversary_policy"],
-    }
-    policy = RslRlAsymmetricActorCriticCfg(
-        init_noise_std=1.0,
-        actor_obs_normalization=True,
-        critic_obs_normalization=True,
-        actor_hidden_dims=[256, 128, 64],
-        critic_hidden_dims=[512, 256, 128, 64],
-        activation="elu",
-        noise_std_type="gsde",
-        state_dependent_std=False,
-        rnn_type="lstm",
-        rnn_hidden_dim=256,
-        rnn_num_layers=1,
-    )
-    algorithm = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        normalize_advantage_per_mini_batch=False,
-        clip_param=0.2,
-        entropy_coef=0.001,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=1.0e-4,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
-
-    # Adversary policy and algorithm (one-step bandit-style)
-    adversary_policy = RslRlFancyActorCriticCfg(
-        init_noise_std=1.0,
-        actor_obs_normalization=True,
-        actor_hidden_dims=[128, 64, 32],
-        critic_obs_normalization=False,
-        critic_hidden_dims=[1],
-        activation="elu",
-        noise_std_type="log",
-        state_dependent_std=False,
-    )
-    adversary_algorithm = RslRlPpoAlgorithmCfg(
-        class_name="SimplePPO",
-        normalize_advantage_per_mini_batch=False,
-        clip_param=0.1,
-        entropy_coef=0.006,
-        num_learning_epochs=1,
-        num_mini_batches=1,
-        learning_rate=1.0e-4,
-        schedule="fixed",
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
-    adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
-    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
-    adversary_param_extractor_fn = extract_cage_physics_params
-
-
-@configclass
-class MultiAgentFullRecurrentRunner(RslRlMARLFullRecurrentRunnerCfg):
-    class_name: str = "MultiAgentRunner"
-    num_steps_per_env = 32
-    adversary_update_every_k_episodes = 5
-    max_iterations = 40000
-    save_interval = 100
-    experiment_name = "cage_adversary_full_recurrent"
-    adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
-    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
-    adversary_param_extractor_fn = extract_cage_physics_params
-    obs_groups = {
-        "policy": ["policy"],
-        "critic": ["critic"],
-    }
-    adversary_obs_groups = {
-        "policy": ["adversary_policy"],
-    }
-    policy = RslRLFancyActorCriticRecurrentCfg(
-        init_noise_std=1.0,
-        actor_obs_normalization=True,
-        critic_obs_normalization=True,
-        actor_hidden_dims=[256, 256],
-        critic_hidden_dims=[256, 256],
-        activation="elu",
-        noise_std_type="gsde",
-        state_dependent_std=False,
-        rnn_type="lstm",
-        rnn_hidden_dim=256,
-        rnn_num_layers=1,
-    )
-    algorithm = RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        normalize_advantage_per_mini_batch=False,
-        clip_param=0.2,
-        entropy_coef=0.003,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=3.0e-4,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
-    adversary_policy = RslRlFancyActorCriticCfg(
-        init_noise_std=1.0,
-        actor_obs_normalization=True,
-        actor_hidden_dims=[128, 64, 32],
-        critic_obs_normalization=False,
-        critic_hidden_dims=[1],
-        activation="elu",
-        noise_std_type="log",
-        state_dependent_std=False,
-    )
-    adversary_algorithm = RslRlPpoAlgorithmCfg(
-        class_name="SimplePPO",
-        normalize_advantage_per_mini_batch=False,
-        clip_param=0.1,
-        entropy_coef=0.006,
-        num_learning_epochs=1,
-        num_mini_batches=1,
-        learning_rate=1.0e-4,
-        schedule="fixed",
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    )
 
 
 # =============================================================================

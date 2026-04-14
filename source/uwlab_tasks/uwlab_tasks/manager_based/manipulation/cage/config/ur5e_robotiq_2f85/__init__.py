@@ -9,57 +9,6 @@ import gymnasium as gym
 
 from . import agents
 
-# Register the partial assemblies environment
-gym.register(
-    id="Cage-PartialAssemblies-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    kwargs={"env_cfg_entry_point": f"{__name__}.partial_assemblies_cfg:PartialAssembliesCfg"},
-    disable_env_checker=True,
-)
-
-# Register the grasp sampling environment
-gym.register(
-    id="Cage-Robotiq2f85-GraspSampling-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    kwargs={"env_cfg_entry_point": f"{__name__}.grasp_sampling_cfg:Robotiq2f85GraspSamplingCfg"},
-    disable_env_checker=True,
-)
-
-# Register reset states environments
-gym.register(
-    id="Cage-UR5eRobotiq2f85-ObjectAnywhereEEAnywhere-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectAnywhereEEAnywhereResetStatesCfg"},
-)
-
-gym.register(
-    id="Cage-UR5eRobotiq2f85-ObjectRestingEEGrasped-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectRestingEEGraspedResetStatesCfg"},
-)
-
-gym.register(
-    id="Cage-UR5eRobotiq2f85-ObjectAnywhereEEGrasped-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectAnywhereEEGraspedResetStatesCfg"},
-)
-
-gym.register(
-    id="Cage-UR5eRobotiq2f85-ObjectPartiallyAssembledEEAnywhere-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectPartiallyAssembledEEAnywhereResetStatesCfg"},
-)
-
-gym.register(
-    id="Cage-UR5eRobotiq2f85-ObjectPartiallyAssembledEEGrasped-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={"env_cfg_entry_point": f"{__name__}.reset_states_cfg:ObjectPartiallyAssembledEEGraspedResetStatesCfg"},
-)
 
 # Register SysID env
 gym.register(
@@ -78,13 +27,33 @@ gym.register(
 )
 
 # Register RL state environments
+
+# =============================================================================
+# Adversary Base
+# =============================================================================
+
 gym.register(
-    id="Cage-Ur5eRobotiq2f85-RelCartesianOSC-State-v0",
+    id="Cage-Ur5eRobotiq2f85-AdversaryBase",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryTrainCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:MultiAgentRunner",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AdversaryBaseRunner",
+    },
+)
+
+
+# =============================================================================
+# CAGE AdversaryAdvancedEventCfg environments
+# =============================================================================
+
+gym.register(
+    id="Cage-Ur5eRobotiq2f85-AdversaryAdvanced",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryAdvancedTrainCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AdversaryAdvancedRunner",
     },
 )
 
@@ -268,41 +237,6 @@ gym.register(
 )
 
 
-# =============================================================================
-# CAGE AdversaryAdvancedEventCfg environments
-# =============================================================================
-
-gym.register(
-    id="Cage-Ur5eRobotiq2f85-AdversaryAdvancedEvent-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryAdvancedTrainCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AdversaryAdvancedRunner",
-    },
-)
 
 
-# =============================================================================
-# CAGE Recurrent Environments
-# =============================================================================
 
-gym.register(
-    id="Cage-Ur5eRobotiq2f85-RelCartesianOSC-State-Recurrent-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryTrainCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:MultiAgentRecurrentRunner",
-    },
-)
-
-gym.register(
-    id="Cage-Ur5eRobotiq2f85-RelCartesianOSC-State-FullRecurrent-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryTrainCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:MultiAgentFullRecurrentRunner",
-    },
-)
