@@ -6,7 +6,6 @@
 from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
-from uwlab_rl.rsl_rl import RslRlMARLRunnerCfg
 from uwlab_rl.rsl_rl.rl_cfg import (
     BehaviorCloningCfg,
     OffPolicyAlgorithmCfg,
@@ -31,6 +30,24 @@ CAGE_ADVERSARY_PARAMETER_NAMES = [
     "robot_joint_friction_scale", "robot_joint_armature_scale",
     "gripper_stiffness_scale", "gripper_damping_scale",
     "osc_stiffness_scale", "osc_damping_scale",
+]
+
+CAGE_ADVERSARY_ADVANCED_PARAMETER_NAMES = [
+    "robot_static_friction", "robot_dynamic_friction",
+    "insertive_object_static_friction", "insertive_object_dynamic_friction",
+    "receptive_object_static_friction", "receptive_object_dynamic_friction",
+    "table_static_friction", "table_dynamic_friction",
+    "robot_mass_scale", "insertive_object_mass_abs",
+    "receptive_object_mass_scale", "table_mass_scale",
+    "arm_armature_shoulder_pan", "arm_armature_shoulder_lift",
+    "arm_armature_elbow", "arm_armature_wrist_1",
+    "arm_armature_wrist_2", "arm_armature_wrist_3",
+    "arm_friction_shoulder_pan", "arm_friction_shoulder_lift",
+    "arm_friction_elbow", "arm_friction_wrist_1",
+    "arm_friction_wrist_2", "arm_friction_wrist_3",
+    "gripper_stiffness_scale", "gripper_damping_scale",
+    "osc_kp_xyz_scale", "osc_kp_rpy_scale",
+    "osc_damping_ratio_xyz_scale", "osc_damping_ratio_rpy_scale",
 ]
 
 
@@ -126,7 +143,11 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     # Generation-specific config
     generation_max_steps: int = 1000  # ~50 episode cycles at 20 steps/episode
     generation_episode_length_s: float = 2.0  # Phase A override; Phase B uses the env's natural episode_length_s
-    adversary_update_every_n_episodes: int = 5
+    # K-episode cycle: each buffer slot is credited with max-mean regret once
+    # it has banked `regret_k` protagonist episodes. When every slot crosses K,
+    # Phase A refills the buffer using the current adversary policy.
+    regret_k: int = 3
+    max_iters_per_cycle: int = 50  # safety cap; force-refill even if some slots haven't reached K
     # Scale on gen_reward in the combined adversary reward:
     #   adv_reward[i] = beta_gen_reward * gen_reward[i] + regret[i]
     # 0.0 disables gen_reward shaping entirely (regret-only curriculum signal).
@@ -199,13 +220,28 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
 
 
 @configclass
-class AdversaryAdvancedRunner(RslRlMARLRunnerCfg):
+class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
+    """Runner for advanced (parameter) adversary + policy training.
+
+    Same validated-reset framework as ``AdversaryBaseRunner``: Phase A samples
+    adversary parameter actions, physics settles, valid states flow into the
+    reset state buffer; Phase B trains the policy from pinned buffer slots
+    with regret crediting the originating Phase A action.
+    """
+
     class_name: str = "MultiAgentRunner"
     num_steps_per_env = 32
-    adversary_update_every_k_episodes = 5
     max_iterations = 40000
     save_interval = 100
     experiment_name = "cage_adversary_advanced"
+
+    # Generation-specific config (same semantics as AdversaryBaseRunner).
+    generation_max_steps: int = 1000
+    generation_episode_length_s: float = 2.0
+    regret_k: int = 3
+    max_iters_per_cycle: int = 50
+    beta_gen_reward: float = 1.0
+
     obs_groups = {
         "policy": ["policy"],
         "critic": ["critic"],
@@ -254,7 +290,7 @@ class AdversaryAdvancedRunner(RslRlMARLRunnerCfg):
         class_name="SimplePPO",
         normalize_advantage_per_mini_batch=False,
         clip_param=0.2,
-        entropy_coef=0.006,
+        entropy_coef=0.05,  # bumped to maintain exploration across 30-D param action
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
@@ -263,5 +299,5 @@ class AdversaryAdvancedRunner(RslRlMARLRunnerCfg):
         max_grad_norm=1.0,
     )
     adversary_robot_parameters = ADVERSARY_ADVANCED_ACTION_DIM
-    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
+    adversary_parameter_names = CAGE_ADVERSARY_ADVANCED_PARAMETER_NAMES
     adversary_param_extractor_fn = extract_cage_physics_params
