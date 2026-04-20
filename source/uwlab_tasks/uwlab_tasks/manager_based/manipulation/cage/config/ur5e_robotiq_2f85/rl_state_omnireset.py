@@ -740,7 +740,7 @@ class Ur5eRobotiq2f85RelCartesianOSCFinetuneCfg(Ur5eRobotiq2f85RlStateCfg):
 # Evaluation configuration (after Stage 1: implicit actuator, soft gains, no sysid DR)
 @configclass
 class Ur5eRobotiq2f85RelCartesianOSCEvalCfg(Ur5eRobotiq2f85RlStateCfg):
-    """Eval after Stage 1: implicit actuator, soft gains, large action scale, no sysid DR."""
+    """Eval after Stage 1: ObjectAnywhereEEAnywhere resets."""
 
     events: TrainEvalEventCfg = TrainEvalEventCfg()
     actions: Ur5eRobotiq2f85RelativeOSCAction = Ur5eRobotiq2f85RelativeOSCAction()

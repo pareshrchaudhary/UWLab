@@ -32,12 +32,18 @@ gym.register(
 # Adversary Base
 # =============================================================================
 
+_omnireset = f"{__name__}.rl_state_omnireset"
+
 gym.register(
     id="Cage-Ur5eRobotiq2f85-AdversaryBase",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryTrainCfg",
+        "eval_ObjectAnywhereEEAnywhere_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
+        "eval_ObjectRestingEEGrasped_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalObjectRestingEEGraspedCfg",
+        "eval_ObjectAnywhereEEGrasped_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalObjectAnywhereEEGraspedCfg",
+        "eval_ObjectPartiallyAssembledEEGrasped_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalObjectPartiallyAssembledEEGraspedCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AdversaryBaseRunner",
     },
 )
@@ -53,6 +59,10 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85AdversaryAdvancedTrainCfg",
+        "eval_ObjectAnywhereEEAnywhere_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
+        "eval_ObjectRestingEEGrasped_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalObjectRestingEEGraspedCfg",
+        "eval_ObjectAnywhereEEGrasped_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalObjectAnywhereEEGraspedCfg",
+        "eval_ObjectPartiallyAssembledEEGrasped_cfg_entry_point": f"{_omnireset}:Ur5eRobotiq2f85RelCartesianOSCEvalObjectPartiallyAssembledEEGraspedCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:AdversaryAdvancedRunner",
     },
 )
@@ -62,7 +72,8 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCFinetuneCfg",
+        "env_cfg_entry_point": f"{__name__}.rl_state_omnireset:Ur5eRobotiq2f85RelCartesianOSCFinetuneCfg",
+        "eval_env_cfg_entry_point": f"{__name__}.rl_state_omnireset:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
     },
 )
@@ -72,7 +83,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
+        "env_cfg_entry_point": f"{__name__}.rl_state_omnireset:Ur5eRobotiq2f85RelCartesianOSCEvalCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
     },
 )
@@ -120,7 +131,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Ur5eRobotiq2f85RelCartesianOSCFinetuneEvalCfg",
+        "env_cfg_entry_point": f"{__name__}.rl_state_omnireset:Ur5eRobotiq2f85RelCartesianOSCFinetuneEvalCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
     },
 )

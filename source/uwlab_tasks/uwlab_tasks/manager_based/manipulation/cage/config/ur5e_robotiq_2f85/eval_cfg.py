@@ -10,7 +10,7 @@ from isaaclab.utils import configclass
 from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR
 
 from ... import mdp as task_mdp
-from .rl_state_cfg import Ur5eRobotiq2f85RelCartesianOSCEvalCfg
+from .rl_state_omnireset import Ur5eRobotiq2f85RelCartesianOSCEvalCfg
 
 
 @configclass
@@ -196,10 +196,3 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3(Ur5eRobotiq2f85RelCartesianOSCEval
             },
         )
 
-
-EVAL_VARIANTS = [
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV0,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3,
-]

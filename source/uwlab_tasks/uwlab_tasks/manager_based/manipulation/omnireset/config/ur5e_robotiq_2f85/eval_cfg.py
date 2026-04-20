@@ -196,10 +196,3 @@ class Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3(Ur5eRobotiq2f85RelCartesianOSCEval
             },
         )
 
-
-EVAL_VARIANTS = [
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV0,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV1,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV2,
-    Ur5eRobotiq2f85RelCartesianOSCEvalCfgV3,
-]
