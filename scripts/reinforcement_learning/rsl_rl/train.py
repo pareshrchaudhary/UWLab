@@ -41,8 +41,6 @@ parser.add_argument(
     default=True,
     help="Adversary parameter HDF5 recording is on by default; pass --record_parameters to disable.",
 )
-parser.add_argument("--eval_interval", type=int, default=50, help="Run eval every N training iterations. Set 0 to disable.")
-parser.add_argument("--eval_num_episodes", type=int, default=100, help="Number of complete episodes per evaluation.")
 parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
 )
@@ -111,7 +109,6 @@ import isaaclab_tasks  # noqa: F401
 import uwlab_tasks  # noqa: F401
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_tasks.utils import get_checkpoint_path
-from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 from uwlab_tasks.utils.hydra import hydra_task_config
 
 # import logger
@@ -213,17 +210,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     # create runner from rsl-rl
-    train_cfg = agent_cfg.to_dict()
-    eval_interval = args_cli.eval_interval if args_cli.eval_interval > 0 else None
-    train_cfg["eval_interval"] = eval_interval
-    train_cfg["eval_num_episodes"] = args_cli.eval_num_episodes
-
     if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, train_cfg, log_dir=log_dir, device=agent_cfg.device)
+        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "MultiAgentRunner":
-        runner = MultiAgentRunner(env, train_cfg, log_dir=log_dir, device=agent_cfg.device)
+        runner = MultiAgentRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, train_cfg, log_dir=log_dir, device=agent_cfg.device)
+        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     # write git state to logs
@@ -233,16 +225,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
-
-    # Set up eval configs from gym kwargs (eval_*_cfg_entry_point keys)
-    task_kwargs = gym.spec(args_cli.task).kwargs
-    eval_keys = [k for k in task_kwargs if k.startswith("eval_") and k.endswith("_cfg_entry_point")]
-
-    if eval_interval is not None and eval_keys:
-        for key in eval_keys:
-            name = key.removeprefix("eval_").removesuffix("_cfg_entry_point")
-            runner.eval_runner.add_eval_env_cfg(name, load_cfg_from_registry(args_cli.task, key))
-        print(f"[INFO] Eval configured: {[k.removeprefix('eval_').removesuffix('_cfg_entry_point') for k in eval_keys]}, every {eval_interval} iters.")
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
