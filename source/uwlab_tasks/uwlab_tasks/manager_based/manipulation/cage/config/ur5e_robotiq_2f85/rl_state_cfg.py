@@ -296,14 +296,6 @@ class AdversaryBaseEventCfg:
         },
     )
 
-    # Runs LAST: loads full scene state from buffer during Phase B policy training.
-    # No-op during Phase A generation (buffer detached/empty), so the adversary
-    # reset events above take effect instead.
-    reset_from_buffer = EventTerm(
-        func=task_mdp.reset_from_state_buffer,
-        mode="reset",
-        params={},
-    )
 
 
 @configclass
@@ -986,10 +978,9 @@ class Ur5eRobotiq2f85RlStateCfg(ManagerBasedRLEnvCfg):
 class Ur5eRobotiq2f85AdversaryTrainCfg(Ur5eRobotiq2f85RlStateCfg):
     """CAGE adversarial training: policy + pose adversary MARL with implicit actuator.
 
-    Uses ``GenerationTerminationCfg`` so the runner's Phase A can detect validated
-    reset states via ``check_reset_state_success``. The runner temporarily overrides
-    ``episode_length_s`` down to the generation length during Phase A and restores
-    the natural training length for Phase B.
+    Uses ``GenerationTerminationCfg`` so the runner can detect validated reset
+    states via ``check_reset_state_success`` — firing the ``success`` termination
+    closes a SETTLING window and promotes the env to LIVE on the pre-success state.
     """
 
     events: AdversaryBaseEventCfg = AdversaryBaseEventCfg()

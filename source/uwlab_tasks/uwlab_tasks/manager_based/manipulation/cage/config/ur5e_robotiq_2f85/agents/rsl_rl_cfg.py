@@ -127,11 +127,15 @@ class Base_DAggerRunnerCfg(Base_PPORunnerCfg):
 
 @configclass
 class AdversaryBaseRunner(RslRlBaseRunnerCfg):
-    """Runner for adversary reset state generation + policy training.
+    """Runner for inline-settling adversary + protagonist training.
 
-    Uses MultiAgentRunner which alternates between:
-    - Generation loop: adversary proposes states, physics settles, valid → buffer
-    - Training loop: policy trains on buffer-loaded states, regret → adversary
+    Each env continuously alternates between LIVE (protagonist-driven,
+    contributes PPO gradient) and SETTLING (adversary-driven, ``settle_max_steps``
+    window terminated by Isaac's natural time_out — transitions stored with
+    ``valid_mask=0``). On a successful settle, the pre-success scene state is
+    restored and the env spends ``regret_k`` LIVE episodes on it before
+    rotating to a fresh adversary proposal. See
+    ``notes/adversary-dip-investigation.md`` §5 for the design motivation.
     """
 
     class_name: str = "MultiAgentRunner"
@@ -140,18 +144,27 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     save_interval = 100
     experiment_name = "cage_adversary_base"
 
-    # Generation-specific config
-    generation_max_steps: int = 1000  # ~50 episode cycles at 20 steps/episode
-    generation_episode_length_s: float = 2.0  # Phase A override; Phase B uses the env's natural episode_length_s
-    # K-episode cycle: each buffer slot is credited with max-mean regret once
-    # it has banked `regret_k` protagonist episodes. When every slot crosses K,
-    # Phase A refills the buffer using the current adversary policy.
-    regret_k: int = 3
-    max_iters_per_cycle: int = 50  # safety cap; force-refill even if some slots haven't reached K
-    # Scale on gen_reward in the combined adversary reward:
-    #   adv_reward[i] = beta_gen_reward * gen_reward[i] + regret[i]
-    # 0.0 disables gen_reward shaping entirely (regret-only curriculum signal).
+    # Regret window: number of LIVE episodes the protagonist gets on each
+    # validated start state before the env flips to SETTLING with a fresh
+    # proposal. Regret = max-mean over these K returns, attributed to the
+    # adversary's proposal as its learning signal.
+    regret_k: int = 6
+    # Weight on the raw gen_reward term when combining with regret:
+    # ``combined = beta_gen_reward * gen_reward + regret``. 0 disables shaping
+    # and leaves regret as the sole signal.
     beta_gen_reward: float = 1.0
+    # KL(π_{n-1} || π_n) penalty coefficient added to the adversary loss.
+    # Anchors the adversary's new distribution to the previous one. 0 disables.
+    adversary_kl_penalty_coef: float = 0.0
+
+    # Inline-settling knobs. Everything here is a production parameter;
+    # there are no stage-gating flags.
+    inline_settling: dict = {
+        "settle_max_steps": 20,               # 2.0s / 0.1s control-step
+        "invalid_settle_penalty": -1.0,       # teacher reward on forced-LIVE commits
+        "max_resample_retries": 5,            # per-env settle attempts before giving up
+        "adversary_update_batch_size": None,  # None ⇒ num_envs (per-rank)
+    }
 
     obs_groups = {
         "policy": ["policy"],
@@ -223,10 +236,9 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
 class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
     """Runner for advanced (parameter) adversary + policy training.
 
-    Same validated-reset framework as ``AdversaryBaseRunner``: Phase A samples
-    adversary parameter actions, physics settles, valid states flow into the
-    reset state buffer; Phase B trains the policy from pinned buffer slots
-    with regret crediting the originating Phase A action.
+    Same inline-settling pipeline as ``AdversaryBaseRunner``; the adversary's
+    action space is the full parameter set (friction, mass, armature, OSC
+    gains, etc.) instead of just the end-effector pose.
     """
 
     class_name: str = "MultiAgentRunner"
@@ -235,12 +247,16 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
     save_interval = 100
     experiment_name = "cage_adversary_advanced"
 
-    # Generation-specific config (same semantics as AdversaryBaseRunner).
-    generation_max_steps: int = 1000
-    generation_episode_length_s: float = 2.0
-    regret_k: int = 3
-    max_iters_per_cycle: int = 50
+    regret_k: int = 6
     beta_gen_reward: float = 1.0
+    adversary_kl_penalty_coef: float = 0.0
+
+    inline_settling: dict = {
+        "settle_max_steps": 20,
+        "invalid_settle_penalty": -1.0,
+        "max_resample_retries": 5,
+        "adversary_update_batch_size": None,
+    }
 
     obs_groups = {
         "policy": ["policy"],

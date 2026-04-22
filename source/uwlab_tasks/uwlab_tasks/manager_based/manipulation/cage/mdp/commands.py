@@ -111,6 +111,14 @@ class TaskCommand(TaskDependentCommand):
         self.euler_xy_distance = torch.zeros((self._env.num_envs), device=self._env.device)
         self.xyz_distance = torch.zeros((self._env.num_envs), device=self._env.device)
 
+        # Inline settling: the runner flips envs between LIVE (protagonist-
+        # driven) and SETTLING (adversary-driven) mid-rollout. SETTLING rows
+        # would otherwise pollute `Metrics/task_command/*` with adversary
+        # perturbation data. The runner writes this mask each step; default
+        # all-True keeps standard single-policy runs unchanged.
+        self._live_mask = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+        self._prev_live_mask = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+
     """
     Properties
     """
@@ -124,14 +132,8 @@ class TaskCommand(TaskDependentCommand):
     """
 
     def _update_metrics(self):
-        # logs end of episode data
-        reset_env = self._env.episode_length_buf == 0
-        self.metrics["end_of_episode_rot_align_error"][reset_env] = self.euler_xy_distance[reset_env]
-        self.metrics["end_of_episode_pos_align_error"][reset_env] = self.xyz_distance[reset_env]
-        last_episode_success = (self.orientation_aligned & self.position_aligned)[reset_env]
-        self.metrics["end_of_episode_success_rate"][reset_env] = last_episode_success.float()
-
-        # logs current data
+        # logs current data (computes euler_xy_distance / xyz_distance for
+        # all envs — unconditional because downstream consumers read these)
         insertive_asset_alignment_pos_w, insertive_asset_alignment_quat_w = self.insertive_asset_offset.apply(
             self.insertive_asset
         )
@@ -151,8 +153,47 @@ class TaskCommand(TaskDependentCommand):
         self.xyz_distance[:] = torch.norm(insertive_asset_in_receptive_asset_frame_pos, dim=1)
         self.position_aligned[:] = self.xyz_distance < self.success_position_threshold
         self.orientation_aligned[:] = self.euler_xy_distance < self.success_orientation_threshold
-        self.metrics["average_rot_align_error"][:] = self.euler_xy_distance
-        self.metrics["average_pos_align_error"][:] = self.xyz_distance
+
+        # Metric writes are LIVE-only. `became_live` catches SETTLING→LIVE
+        # flips that skip Isaac's `_reset_idx` (e.g. valid-settle restores
+        # state via runner-side write); without it `end_of_episode_*` would
+        # stay at the stale zero from the prior SETTLING reset.
+        live = self._live_mask
+        became_live = live & ~self._prev_live_mask
+        episode_start = ((self._env.episode_length_buf == 0) & live) | became_live
+        self.metrics["end_of_episode_rot_align_error"][episode_start] = self.euler_xy_distance[episode_start]
+        self.metrics["end_of_episode_pos_align_error"][episode_start] = self.xyz_distance[episode_start]
+        last_episode_success = (self.orientation_aligned & self.position_aligned)[episode_start]
+        self.metrics["end_of_episode_success_rate"][episode_start] = last_episode_success.float()
+        self.metrics["average_rot_align_error"][live] = self.euler_xy_distance[live]
+        self.metrics["average_pos_align_error"][live] = self.xyz_distance[live]
+        self._prev_live_mask.copy_(live)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
+        """Override to compute the logged mean over LIVE-only reset envs.
+
+        Isaac's default ``CommandTerm.reset`` averages each metric over every
+        env that reset this step. In inline settling, SETTLING-mode resets
+        hold stale or zero metric values (``_update_metrics`` skips them),
+        so pooling them into the mean would bias the scalar. We filter
+        ``env_ids`` to LIVE envs for the mean, but still zero + resample on
+        all reset envs to preserve Isaac's bookkeeping.
+        """
+        if env_ids is None:
+            env_ids_t = self.ALL_INDICES
+        elif isinstance(env_ids, torch.Tensor):
+            env_ids_t = env_ids
+        else:
+            env_ids_t = torch.as_tensor(list(env_ids), dtype=torch.long, device=self.device)
+        live_ids = env_ids_t[self._live_mask[env_ids_t]]
+        extras: dict[str, float] = {}
+        for metric_name, metric_value in self.metrics.items():
+            if live_ids.numel() > 0:
+                extras[metric_name] = torch.mean(metric_value[live_ids]).item()
+            metric_value[env_ids_t] = 0.0
+        self.command_counter[env_ids_t] = 0
+        self._resample(env_ids_t)
+        return extras
 
     def _resample_command(self, env_ids: Sequence[int]):
         super()._resample_command(env_ids)
