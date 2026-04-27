@@ -277,10 +277,11 @@ class AdversaryBaseEventCfg:
         params={
             "fixed_asset_cfg": SceneEntityCfg("robot"),
             "fixed_asset_offset": None,
+            "target_asset_cfg": SceneEntityCfg("insertive_object"),
             "pose_range_b": {
-                "x": (0.3, 0.7),
-                "y": (-0.4, 0.5),
-                "z": (0.05, 0.5),
+                "x": (-0.08, 0.08),
+                "y": (-0.08, 0.08),
+                "z": (0.0, 0.18),
                 "roll": (-np.pi / 16, np.pi / 16),
                 "pitch": (np.pi / 4 - np.pi / 16, 3 * np.pi / 4 + np.pi / 16),
                 "yaw": (np.pi / 2 - np.pi / 16, 3 * np.pi / 2 + np.pi / 16),
@@ -301,7 +302,7 @@ class AdversaryBaseEventCfg:
 @configclass
 class AdversaryAdvancedEventCfg:
     """Advanced adversary events: adversary controls friction, mass, joint and actuator
-    gains, and OSC gains while pose resets use standard randomization.
+    gains, and OSC gains while object/EE poses are loaded from the OmniReset dataset.
 
     Action index map (18D total, ``ADVERSARY_ADVANCED_ACTION_DIM``):
         0-1:   robot static/dynamic friction
@@ -469,64 +470,23 @@ class AdversaryAdvancedEventCfg:
         },
     )
 
-    # --- Standard pose resets (not adversary-controlled) ---
+    # --- Resets loaded from OmniReset dataset (not adversary-controlled) ---
 
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
 
-    reset_receptive_object_pose = EventTerm(
-        func=task_mdp.reset_root_states_uniform,
+    reset_from_reset_states = EventTerm(
+        func=task_mdp.MultiResetManager,
         mode="reset",
         params={
-            "pose_range": {
-                "x": (0.3, 0.55),
-                "y": (-0.1, 0.3),
-                "z": (0.0, 0.0),
-                "roll": (0.0, 0.0),
-                "pitch": (0.0, 0.0),
-                "yaw": (-np.pi / 12, np.pi / 12),
-            },
-            "velocity_range": {},
-            "asset_cfgs": {"receptive_object": SceneEntityCfg("receptive_object")},
-            "offset_asset_cfg": SceneEntityCfg("ur5_metal_support"),
-            "use_bottom_offset": True,
-        },
-    )
-
-    reset_insertive_object = EventTerm(
-        func=task_mdp.reset_insertive_object_from_partial_assembly_dataset,
-        mode="reset",
-        params={
-            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
-            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
             "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
-            "pose_range_b": {
-                "x": (-0.2, 0.2),
-                "y": (-0.2, 0.2),
-                "z": (0.0, 0.3),
-                "roll": (-np.pi, np.pi),
-                "pitch": (-np.pi, np.pi),
-                "yaw": (-np.pi, np.pi),
-            },
-        },
-    )
-
-    reset_end_effector_pose = EventTerm(
-        func=task_mdp.reset_end_effector_round_fixed_asset,
-        mode="reset",
-        params={
-            "fixed_asset_cfg": SceneEntityCfg("robot"),
-            "fixed_asset_offset": None,
-            "pose_range_b": {
-                "x": (0.3, 0.7),
-                "y": (-0.4, 0.5),
-                "z": (0.05, 0.5),
-                "roll": (-np.pi / 16, np.pi / 16),
-                "pitch": (np.pi / 4 - np.pi / 16, 3 * np.pi / 4 + np.pi / 16),
-                "yaw": (np.pi / 2 - np.pi / 16, 3 * np.pi / 2 + np.pi / 16),
-            },
-            "robot_ik_cfg": SceneEntityCfg(
-                "robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"], body_names="robotiq_base_link"
-            ),
+            "reset_types": [
+                "ObjectAnywhereEEAnywhere",
+                "ObjectRestingEEGrasped",
+                "ObjectAnywhereEEGrasped",
+                "ObjectPartiallyAssembledEEGrasped",
+            ],
+            "probs": [0.25, 0.25, 0.25, 0.25],
+            "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
         },
     )
 

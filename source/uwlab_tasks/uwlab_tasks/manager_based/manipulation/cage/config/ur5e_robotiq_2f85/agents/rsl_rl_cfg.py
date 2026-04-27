@@ -148,7 +148,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     # validated start state before the env flips to SETTLING with a fresh
     # proposal. Regret = max-mean over these K returns, attributed to the
     # adversary's proposal as its learning signal.
-    regret_k: int = 6
+    regret_k: int = 3
     # Weight on the raw gen_reward term when combining with regret:
     # ``combined = beta_gen_reward * gen_reward + regret``. 0 disables shaping
     # and leaves regret as the sole signal.
@@ -199,7 +199,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
         max_grad_norm=1.0,
     )
 
-    # Adversary policy and algorithm (bandit-style)
+    # Adversary policy and algorithm
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -211,14 +211,14 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
         state_dependent_std=False,
     )
     adversary_algorithm = RslRlPpoAlgorithmCfg(
-        class_name="SimplePPO",
+        class_name="Reinforce",
         normalize_advantage_per_mini_batch=False,
         clip_param=0.2,
         entropy_coef=0.05,  # bumped from 0.006 to maintain exploration spread
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
-        schedule="fixed",
+        schedule="adaptive",
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
@@ -228,9 +228,8 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
 
 
 # =============================================================================
-# AdversaryAdvancedEventCfg runner (parameter adversary MARL)
+# AdversaryAdvancedEventCfg runner
 # =============================================================================
-
 
 @configclass
 class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
@@ -256,6 +255,9 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
         "invalid_settle_penalty": -1.0,
         "max_resample_retries": 5,
         "adversary_update_batch_size": None,
+        # Parameter-only adversary: dataset resets are pre-validated, no
+        # SETTLING gate needed. Adversary reward = -ep_return per rollout.
+        "skip_settling": True,
     }
 
     obs_groups = {
@@ -303,7 +305,7 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
         state_dependent_std=False,
     )
     adversary_algorithm = RslRlPpoAlgorithmCfg(
-        class_name="SimplePPO",
+        class_name="Reinforce",
         normalize_advantage_per_mini_batch=False,
         clip_param=0.2,
         entropy_coef=0.05,  # bumped to maintain exploration across 30-D param action
