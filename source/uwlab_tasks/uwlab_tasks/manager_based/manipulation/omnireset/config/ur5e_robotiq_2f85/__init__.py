@@ -114,7 +114,7 @@ gym.register(
 
 # Single-variant state eval configs (multi-variant bench uses State-Play-v0 + apply_multi_eval_events)
 gym.register(
-    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV0-v0",
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -123,7 +123,7 @@ gym.register(
     },
 )
 gym.register(
-    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV1-v0",
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV1",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -132,7 +132,7 @@ gym.register(
     },
 )
 gym.register(
-    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV2-v0",
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV2",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
@@ -141,7 +141,7 @@ gym.register(
     },
 )
 gym.register(
-    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV3-v0",
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV3",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
