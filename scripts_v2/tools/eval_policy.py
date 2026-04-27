@@ -29,6 +29,7 @@ parser.add_argument(
     default=100,
     help="Number of trajectories to evaluate. If None, run until simulation is stopped.",
 )
+parser.add_argument("--action_noise", type=float, default=2.0, help="Std of Gaussian noise added to actions.")
 parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
 parser.add_argument("--save_video", action="store_true", default=False, help="Save video of the policy.")
 parser.add_argument(
@@ -280,6 +281,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         with torch.inference_mode():
             actions = policy(obs)
+            if args_cli.action_noise > 0.0:
+                actions = actions + args_cli.action_noise * torch.randn_like(actions)
 
             if args_cli.save_video:
                 for i in range(args_cli.num_envs):
