@@ -10,9 +10,9 @@ from isaaclab.utils import configclass
 from .adversary_actions import AdversaryAction
 
 
-# Receptive root: x, y, yaw (0–2). Insertive offset: 6-D body frame (3–8).
-# EE world-frame pose: x, y, z, roll, pitch, yaw (9–14). Gripper finger_joint (15).
-ADVERSARY_POSE_ACTION_DIM = 16
+# Receptive root: x, y, yaw (0-2). Insertive offset: 6-D body frame (3-8).
+# EE pose relative to insertive object: x, y, z, roll, pitch, yaw (9-14).
+ADVERSARY_POSE_ACTION_DIM = 15
 
 # Parameter adversary (AdversaryAdvancedEventCfg): friction, mass, joint/actuator/OSC gains (18 total).
 # Friction: robot(0-1), insertive(2-3), receptive(4-5), table(6-7) — static, dynamic each.

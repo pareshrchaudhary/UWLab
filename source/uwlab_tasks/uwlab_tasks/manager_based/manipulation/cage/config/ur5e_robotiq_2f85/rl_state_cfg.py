@@ -275,25 +275,23 @@ class AdversaryBaseEventCfg:
         func=task_mdp.adversary_reset_end_effector_from_action,
         mode="reset",
         params={
-            "fixed_asset_cfg": SceneEntityCfg("robot"),
-            "fixed_asset_offset": None,
-            "target_asset_cfg": SceneEntityCfg("insertive_object"),
+            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
+            "grasped_asset_cfg": SceneEntityCfg("insertive_object"),
             "pose_range_b": {
-                "x": (-0.08, 0.08),
-                "y": (-0.08, 0.08),
-                "z": (0.0, 0.18),
-                "roll": (-np.pi / 16, np.pi / 16),
-                "pitch": (np.pi / 4 - np.pi / 16, 3 * np.pi / 4 + np.pi / 16),
-                "yaw": (np.pi / 2 - np.pi / 16, 3 * np.pi / 2 + np.pi / 16),
+                "x": (-0.15, 0.15),
+                "y": (-0.15, 0.15),
+                "z": (-0.05, 0.30),
+                "roll": (-np.pi / 4, np.pi / 4),
+                "pitch": (-np.pi / 4, np.pi / 4),
+                "yaw": (-np.pi / 4, np.pi / 4),
             },
             "robot_ik_cfg": SceneEntityCfg(
                 "robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"], body_names="robotiq_base_link"
             ),
-            "gripper_cfg": SceneEntityCfg("robot", joint_names=["finger_joint"]),
+            "gripper_cfg": SceneEntityCfg("robot", joint_names=["finger_joint", ".*right.*", ".*left.*"]),
             "gripper_range": (0.0, 0.785398),
             "action_name": "adversaryaction",
             "action_start_index": 9,
-            "gripper_action_index": 15,
         },
     )
 
@@ -669,10 +667,15 @@ class ObservationsCfg:
 
 @configclass
 class AdversaryPolicyCfg(ObsGroup):
-    """Adversary actor observations (bandit-style: noise input only)."""
+    """Adversary actor observations with settled policy context and previous proposal."""
 
-    noise = ObsTerm(
-        func=task_mdp.adversary_noise,
+    settled_policy_observation = ObsTerm(
+        func=task_mdp.adversary_settled_policy_observation,
+        params={"dim": 36},
+    )
+
+    previous_action = ObsTerm(
+        func=task_mdp.adversary_previous_action,
         params={"dim": UR5E_ROBOTIQ_2F85_ADVERSARY_ACTION.action_dim},
     )
 
@@ -704,7 +707,7 @@ class MARLObservationsCfg:
     Keys in obs_buf:
         - "policy": policy actor observations (with adversary action stripped from prev_actions)
         - "critic": policy critic observations
-        - "adversary_policy": adversary actor observations (noise only)
+        - "adversary_policy": settled policy observation + previous adversary action
     """
 
     policy: ObservationsCfg.PolicyCfg = ObservationsCfg.PolicyCfg()
@@ -816,9 +819,9 @@ class GenerationTerminationCfg:
                     obstacle_cfgs=[SceneEntityCfg("receptive_object")],
                 ),
             ],
-            "max_robot_pos_deviation": 0.025,
-            "max_object_pos_deviation": 0.025,
-            "pos_z_threshold": -0.01,
+            "max_robot_pos_deviation": 0.1,
+            "max_object_pos_deviation": 0.05,
+            "pos_z_threshold": -0.02,
             "consecutive_stability_steps": 5,
         },
         time_out=True,

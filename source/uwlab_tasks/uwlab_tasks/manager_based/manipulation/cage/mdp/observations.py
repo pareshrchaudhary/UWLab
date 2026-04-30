@@ -317,6 +317,32 @@ def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = ADVER
     return full_actions[:, :policy_action_dim]
 
 
+def adversary_settled_policy_observation(
+    env: ManagerBasedEnv,
+    dim: int,
+    attr_name: str = "_cage_adversary_settled_policy_observation",
+) -> torch.Tensor:
+    """Reset-state context captured after the previous valid settling window."""
+    source_env = getattr(env, "unwrapped", env)
+    settled_observation = getattr(source_env, attr_name, None)
+    if settled_observation is None:
+        return torch.zeros((env.num_envs, dim), device=env.device, dtype=torch.float)
+    return settled_observation[:, :dim].to(device=env.device, dtype=torch.float)
+
+
+def adversary_previous_action(
+    env: ManagerBasedEnv,
+    dim: int = ADVERSARY_POSE_ACTION_DIM,
+    action_name: str = "adversaryaction",
+) -> torch.Tensor:
+    """Last sampled adversary proposal for autoregressive adversary observations."""
+    action_term = env.action_manager._terms.get(action_name)
+    previous_action = getattr(action_term, "previous_actions", None)
+    if action_term is None or previous_action is None:
+        return torch.zeros((env.num_envs, dim), device=env.device, dtype=torch.float)
+    return previous_action[:, :dim].to(device=env.device, dtype=torch.float)
+
+
 def adversary_noise(env: ManagerBasedEnv, dim: int = ADVERSARY_POSE_ACTION_DIM) -> torch.Tensor:
     """Standard normal noise for adversary policy input."""
     return torch.randn((env.num_envs, dim), device=env.device, dtype=torch.float)

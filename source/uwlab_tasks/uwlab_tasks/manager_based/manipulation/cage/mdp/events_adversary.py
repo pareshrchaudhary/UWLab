@@ -542,32 +542,26 @@ class adversary_reset_insertive_object_pose_from_assembled_offset(ManagerTermBas
 
 
 class adversary_reset_end_effector_from_action(ManagerTermBase):
-    """Reset end-effector pose and gripper state from the adversary's action.
+    """Reset end-effector pose and gripper state from a 50/50 grasp/action mix.
 
-    Mirrors the structure of omnireset's ``reset_end_effector_round_fixed_asset``:
-    set IK target → 10 damped iterations → write joint state. The only difference
-    is that the target comes from the clamped adversary action
-    (``action[start:start+6]`` for EE pose, ``action[gripper_action_index]`` for
-    the gripper finger joint), not a uniform sample. After the IK loop, the
-    gripper joint is written explicitly.
-
-    No validation, no resampling, no fallback. Bad proposals → bad robot pose →
-    physics settling fails → ``abnormal_robot`` or ``check_reset_state_success``
-    rejects the state → adversary gets a low reward and learns to avoid them.
-    The downstream physics validation is the only validator.
+    Half of the reset envs use a saved OmniReset grasp for the insertive object;
+    the other half place the EE at an adversary-chosen offset *relative to the
+    insertive object* (body frame), so the adversary directly controls approach
+    distance and angle rather than absolute workspace coordinates.
+    Downstream physics settling validates both branches.
     """
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
 
-        fixed_asset_cfg: SceneEntityCfg = cfg.params.get("fixed_asset_cfg")  # type: ignore
-        fixed_asset_offset: Offset = cfg.params.get("fixed_asset_offset")  # type: ignore
+        self.dataset_dir: str = cfg.params.get("dataset_dir")
+        grasped_asset_cfg: SceneEntityCfg = cfg.params.get("grasped_asset_cfg")  # type: ignore
         robot_ik_cfg: SceneEntityCfg = cfg.params.get("robot_ik_cfg", SceneEntityCfg("robot"))
         gripper_cfg: SceneEntityCfg = cfg.params.get(
-            "gripper_cfg", SceneEntityCfg("robot", joint_names=["finger_joint"])
+            "gripper_cfg", SceneEntityCfg("robot", joint_names=["finger_joint", ".*right.*", ".*left.*"])
         )
 
-        # Pose range for clamping the adversary's 6D EE proposal
+        # Pose range for clamping the adversary's 6D EE offset relative to insertive object
         pose_range_b: dict[str, tuple[float, float]] = cfg.params.get("pose_range_b")  # type: ignore
         range_list = [pose_range_b.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
         self.ranges = torch.tensor(range_list, device=env.device)
@@ -576,11 +570,7 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         gripper_range: tuple[float, float] = cfg.params.get("gripper_range", (0.0, 0.785398))
         self.gripper_range = torch.tensor(gripper_range, device=env.device)
 
-        # Fixed asset (robot base) for position offset
-        self.fixed_asset: Articulation | RigidObject = env.scene[fixed_asset_cfg.name]
-        self.fixed_asset_offset: Offset = fixed_asset_offset
-
-        # Robot and IK solver — same setup as omnireset's reset_end_effector_round_fixed_asset
+        # Robot and IK solver
         self.robot: Articulation = env.scene[robot_ik_cfg.name]
         self.joint_ids: list[int] | slice = robot_ik_cfg.joint_ids
         self.n_joints: int = self.robot.num_joints if isinstance(self.joint_ids, slice) else len(self.joint_ids)
@@ -596,73 +586,184 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
 
         # Gripper joint
         self.gripper_joint_ids: list[int] | slice = gripper_cfg.joint_ids
+        self.grasped_asset: RigidObject = env.scene[grasped_asset_cfg.name]
+        self.grasp_dataset_path = self._compute_grasp_dataset_path()
+        self._load_and_precompute_grasps(env)
 
         # Action indices
         self.action_name: str = cfg.params["action_name"]
         self.action_start_index: int = cfg.params.get("action_start_index", 9)
-        self.gripper_action_index: int = cfg.params.get("gripper_action_index", 15)
+
+    def _compute_grasp_dataset_path(self) -> str:
+        usd_path = self.grasped_asset.cfg.spawn.usd_path
+        obj_name = utils.object_name_from_usd(usd_path)
+        return f"{self.dataset_dir}/Grasps/{obj_name}/grasps.pt"
+
+    def _load_and_precompute_grasps(self, env: ManagerBasedEnv) -> None:
+        """Load successful grasp relative poses and gripper joint states."""
+        local_path = utils.safe_retrieve_file_path(self.grasp_dataset_path)
+        data = torch.load(local_path, map_location="cpu")
+        grasp_group = data.get("grasp_relative_pose", data)
+
+        rel_pos_list = grasp_group.get("relative_position", [])
+        rel_quat_list = grasp_group.get("relative_orientation", [])
+        gripper_joint_positions_dict = grasp_group.get("gripper_joint_positions", {})
+
+        num_grasps = len(rel_pos_list)
+        if num_grasps == 0:
+            raise ValueError(f"No grasp data found in {self.grasp_dataset_path}")
+
+        self.rel_positions = torch.stack(
+            [
+                (pos if isinstance(pos, torch.Tensor) else torch.as_tensor(pos, dtype=torch.float32))
+                for pos in rel_pos_list
+            ],
+            dim=0,
+        ).to(env.device, dtype=torch.float32)
+        self.rel_quaternions = torch.stack(
+            [
+                (quat if isinstance(quat, torch.Tensor) else torch.as_tensor(quat, dtype=torch.float32))
+                for quat in rel_quat_list
+            ],
+            dim=0,
+        ).to(env.device, dtype=torch.float32)
+
+        if isinstance(self.gripper_joint_ids, slice):
+            gripper_joint_list = list(range(self.robot.num_joints))[self.gripper_joint_ids]
+        else:
+            gripper_joint_list = list(self.gripper_joint_ids)
+        self.gripper_joint_list = gripper_joint_list
+
+        self.gripper_joint_positions = torch.zeros(
+            (num_grasps, len(gripper_joint_list)), device=env.device, dtype=torch.float32
+        )
+        for gripper_idx, robot_joint_idx in enumerate(gripper_joint_list):
+            joint_name = self.robot.joint_names[robot_joint_idx]
+            joint_series = gripper_joint_positions_dict.get(joint_name, [0.0] * num_grasps)
+            joint_tensor = torch.stack(
+                [(j if isinstance(j, torch.Tensor) else torch.as_tensor(j, dtype=torch.float32)) for j in joint_series],
+                dim=0,
+            ).to(env.device, dtype=torch.float32)
+            self.gripper_joint_positions[:, gripper_idx] = joint_tensor
+
+        self.gripper_open_positions = self.robot.data.default_joint_pos[0, gripper_joint_list].to(
+            env.device, dtype=torch.float32
+        ).clone()
+        closed_sign = torch.sign(self.gripper_joint_positions.mean(dim=0))
+        closed_sign = torch.where(closed_sign == 0.0, torch.ones_like(closed_sign), closed_sign)
+        closed_magnitude = torch.full_like(self.gripper_open_positions, float(self.gripper_range[1].item()))
+        self.gripper_closed_positions = closed_sign * closed_magnitude
+
+    def _store_settling_gripper_targets(
+        self, env: ManagerBasedEnv, env_ids: torch.Tensor, gripper_action_targets: torch.Tensor
+    ) -> None:
+        target_attr = "_cage_adversary_gripper_action_target"
+        target = getattr(env, target_attr, None)
+        if not isinstance(target, torch.Tensor) or target.shape != (env.num_envs,):
+            target = -torch.ones(env.num_envs, device=env.device, dtype=torch.float32)
+            setattr(env, target_attr, target)
+        target[env_ids] = gripper_action_targets.to(target.device, dtype=target.dtype)
 
     def __call__(
         self,
         env: ManagerBasedEnv,
         env_ids: torch.Tensor,
-        fixed_asset_cfg: SceneEntityCfg = None,
-        fixed_asset_offset: Offset = None,
+        dataset_dir: str = "",
+        grasped_asset_cfg: SceneEntityCfg = None,
         pose_range_b: dict[str, tuple[float, float]] = dict(),
         robot_ik_cfg: SceneEntityCfg = None,
         gripper_cfg: SceneEntityCfg = None,
         gripper_range: tuple[float, float] = (0.0, 0.785398),
         action_name: str = "adversaryaction",
         action_start_index: int = 9,
-        gripper_action_index: int = 15,
     ) -> None:
-        # Read adversary actions for the envs being reset
         raw_actions = _get_action_term_raw_actions(env, self.action_name)
         a = raw_actions[env_ids.to(raw_actions.device)]
+        num_envs = len(env_ids)
 
-        # Clamp the 6-DOF EE pose to the configured range
-        si = self.action_start_index
-        clamped = torch.clamp(a[:, si : si + 6], self.ranges[:, 0], self.ranges[:, 1])
+        grasped_mask = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+        grasped_mask[torch.randperm(num_envs, device=env.device)[: num_envs // 2]] = True
+        adv_local = (~grasped_mask).nonzero(as_tuple=False).squeeze(-1)
+        grasp_local = grasped_mask.nonzero(as_tuple=False).squeeze(-1)
+        adv_ids = env_ids[adv_local]
+        grasp_ids = env_ids[grasp_local]
 
-        # World-frame target = fixed asset tip + adversary offset
-        if self.fixed_asset_offset is not None:
-            fixed_tip_pos_w, _ = self.fixed_asset_offset.apply(self.fixed_asset)
-        else:
-            fixed_tip_pos_w = self.fixed_asset.data.root_pos_w
-
-        pos_w = fixed_tip_pos_w[env_ids] + clamped[:, 0:3]
-        quat_w = math_utils.quat_from_euler_xyz(clamped[:, 3], clamped[:, 4], clamped[:, 5])
-
-        # Convert world target to base frame, fill only env_ids slots
         pos_b, quat_b = self.solver._compute_frame_pose()
-        pos_b[env_ids], quat_b[env_ids] = math_utils.subtract_frame_transforms(
-            self.robot.data.root_link_pos_w[env_ids],
-            self.robot.data.root_link_quat_w[env_ids],
-            pos_w,
-            quat_w,
-        )
+
+        if adv_ids.numel() > 0:
+            si = self.action_start_index
+            adv_clamped = torch.clamp(a[adv_local, si : si + 6], self.ranges[:, 0], self.ranges[:, 1])
+            adv_rel_quat = math_utils.quat_from_euler_xyz(adv_clamped[:, 3], adv_clamped[:, 4], adv_clamped[:, 5])
+            adv_pos_w, adv_quat_w = math_utils.combine_frame_transforms(
+                self.grasped_asset.data.root_pos_w[adv_ids],
+                self.grasped_asset.data.root_quat_w[adv_ids],
+                adv_clamped[:, 0:3],
+                adv_rel_quat,
+            )
+            pos_b[adv_ids], quat_b[adv_ids] = math_utils.subtract_frame_transforms(
+                self.robot.data.root_link_pos_w[adv_ids],
+                self.robot.data.root_link_quat_w[adv_ids],
+                adv_pos_w,
+                adv_quat_w,
+            )
+
+        grasp_indices = None
+        if grasp_ids.numel() > 0:
+            grasp_indices = torch.randint(0, len(self.rel_positions), (grasp_ids.numel(),), device=env.device)
+            grasp_pos_w, grasp_quat_w = math_utils.combine_frame_transforms(
+                self.grasped_asset.data.root_pos_w[grasp_ids],
+                self.grasped_asset.data.root_quat_w[grasp_ids],
+                self.rel_positions[grasp_indices],
+                self.rel_quaternions[grasp_indices],
+            )
+            pos_b[grasp_ids], quat_b[grasp_ids] = math_utils.subtract_frame_transforms(
+                self.robot.data.root_link_pos_w[grasp_ids],
+                self.robot.data.root_link_quat_w[grasp_ids],
+                grasp_pos_w,
+                grasp_quat_w,
+            )
+
         self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
 
-        # 10 damped IK iterations (matches omnireset; ~5% residual error)
-        for _ in range(10):
+        # Match the grasp-dataset reset's convergence target.
+        for _ in range(25):
             self.solver.apply_actions()
             delta_joint_pos = 0.25 * (self.robot.data.joint_pos_target[env_ids] - self.robot.data.joint_pos[env_ids])
             self.robot.write_joint_state_to_sim(
                 position=(delta_joint_pos + self.robot.data.joint_pos[env_ids])[:, self.joint_ids],
-                velocity=torch.zeros((len(env_ids), self.n_joints), device=env.device),
+                velocity=torch.zeros((num_envs, self.n_joints), device=env.device),
                 joint_ids=self.joint_ids,
                 env_ids=env_ids,
             )
 
-        # Write gripper joint
-        gripper_value = torch.clamp(
-            a[:, self.gripper_action_index], self.gripper_range[0], self.gripper_range[1]
-        ).unsqueeze(-1)
+        num_gripper_joints = self.gripper_joint_positions.shape[1]
+        gripper_positions = torch.zeros((num_envs, num_gripper_joints), device=env.device)
+        gripper_action_targets = -torch.ones(num_envs, device=env.device, dtype=torch.float32)
+        adv_gripper_targets = torch.empty((0,), device=env.device, dtype=torch.float32)
+
+        if adv_local.numel() > 0:
+            adv_gripper_targets = torch.where(
+                torch.rand(adv_local.numel(), device=env.device) < 0.5,
+                torch.ones(adv_local.numel(), device=env.device, dtype=torch.float32),
+                -torch.ones(adv_local.numel(), device=env.device, dtype=torch.float32),
+            )
+            gripper_action_targets[adv_local] = adv_gripper_targets
+            open_positions = self.gripper_open_positions.unsqueeze(0).expand(adv_local.numel(), -1)
+            closed_positions = self.gripper_closed_positions.unsqueeze(0).expand(adv_local.numel(), -1)
+            gripper_positions[adv_local] = torch.where(
+                (adv_gripper_targets > 0.0).unsqueeze(-1),
+                open_positions,
+                closed_positions,
+            )
+
+        if grasp_local.numel() > 0:
+            gripper_positions[grasp_local] = self.gripper_joint_positions[grasp_indices]
+
         self.robot.write_joint_state_to_sim(
-            position=gripper_value,
-            velocity=torch.zeros_like(gripper_value),
+            position=gripper_positions,
+            velocity=torch.zeros_like(gripper_positions),
             joint_ids=self.gripper_joint_ids,
             env_ids=env_ids,
         )
-
+        self._store_settling_gripper_targets(env, env_ids, gripper_action_targets)
 

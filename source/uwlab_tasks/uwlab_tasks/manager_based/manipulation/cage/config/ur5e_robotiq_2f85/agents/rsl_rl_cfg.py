@@ -21,15 +21,11 @@ from uwlab_tasks.manager_based.manipulation.cage.mdp.actions.adversary_actions_c
 )
 
 CAGE_ADVERSARY_PARAMETER_NAMES = [
-    "robot_static_friction", "robot_dynamic_friction",
-    "insertive_object_static_friction", "insertive_object_dynamic_friction",
-    "receptive_object_static_friction", "receptive_object_dynamic_friction",
-    "table_static_friction", "table_dynamic_friction",
-    "robot_mass_scale", "insertive_object_mass_scale",
-    "receptive_object_mass_scale", "table_mass_scale",
-    "robot_joint_friction_scale", "robot_joint_armature_scale",
-    "gripper_stiffness_scale", "gripper_damping_scale",
-    "osc_stiffness_scale", "osc_damping_scale",
+    "receptive_object_x", "receptive_object_y", "receptive_object_yaw",
+    "insertive_object_rel_x", "insertive_object_rel_y", "insertive_object_rel_z",
+    "insertive_object_rel_roll", "insertive_object_rel_pitch", "insertive_object_rel_yaw",
+    "end_effector_rel_x", "end_effector_rel_y", "end_effector_rel_z",
+    "end_effector_rel_roll", "end_effector_rel_pitch", "end_effector_rel_yaw",
 ]
 
 CAGE_ADVERSARY_ADVANCED_PARAMETER_NAMES = [
@@ -148,7 +144,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     # validated start state before the env flips to SETTLING with a fresh
     # proposal. Regret = max-mean over these K returns, attributed to the
     # adversary's proposal as its learning signal.
-    regret_k: int = 3
+    regret_k: int = 6
     # Weight on the raw gen_reward term when combining with regret:
     # ``combined = beta_gen_reward * gen_reward + regret``. 0 disables shaping
     # and leaves regret as the sole signal.
@@ -164,6 +160,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
         "invalid_settle_penalty": -1.0,       # teacher reward on forced-LIVE commits
         "max_resample_retries": 5,            # per-env settle attempts before giving up
         "adversary_update_batch_size": None,  # None ⇒ num_envs (per-rank)
+        "settling_gripper_default_action": -1.0,
     }
 
     obs_groups = {
@@ -203,8 +200,8 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
-        actor_hidden_dims=[128, 64, 32],
         critic_obs_normalization=False,
+        actor_hidden_dims=[512, 256, 128, 64],
         critic_hidden_dims=[1],
         activation="elu",
         noise_std_type="log",
@@ -214,7 +211,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
         class_name="Reinforce",
         normalize_advantage_per_mini_batch=False,
         clip_param=0.2,
-        entropy_coef=0.05,  # bumped from 0.006 to maintain exploration spread
+        entropy_coef=0.006,
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
@@ -224,7 +221,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     )
     adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
     adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
-    adversary_param_extractor_fn = extract_cage_physics_params
+    adversary_param_extractor_fn = None
 
 
 # =============================================================================
