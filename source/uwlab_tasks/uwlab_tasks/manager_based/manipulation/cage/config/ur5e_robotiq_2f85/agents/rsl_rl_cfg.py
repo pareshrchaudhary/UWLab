@@ -116,45 +116,18 @@ class Base_DAggerRunnerCfg(Base_PPORunnerCfg):
     )
 
 
-# =============================================================================
-# Adversary Base Runner
-# =============================================================================
-
-
 @configclass
 class AdversaryBaseRunner(RslRlBaseRunnerCfg):
-    """Runner for inline-settling adversary + protagonist training.
-
-    Each env continuously alternates between LIVE (protagonist-driven,
-    contributes PPO gradient) and SETTLING (adversary-driven, ``settle_max_steps``
-    window terminated by Isaac's natural time_out — transitions stored with
-    ``valid_mask=0``). On a successful settle, the pre-success scene state is
-    restored and the env spends ``regret_k`` LIVE episodes on it before
-    rotating to a fresh adversary proposal. See
-    ``notes/adversary-dip-investigation.md`` §5 for the design motivation.
-    """
-
     class_name: str = "MultiAgentRunner"
     num_steps_per_env = 32
     max_iterations = 40000
     save_interval = 100
     experiment_name = "cage_adversary_base"
 
-    # Regret window: number of LIVE episodes the protagonist gets on each
-    # validated start state before the env flips to SETTLING with a fresh
-    # proposal. Regret = max-mean over these K returns, attributed to the
-    # adversary's proposal as its learning signal.
     regret_k: int = 9
-    # Weight on the raw gen_reward term when combining with regret:
-    # ``combined = beta_gen_reward * gen_reward + regret``. 0 disables shaping
-    # and leaves regret as the sole signal.
     beta_gen_reward: float = 1.0
-    # KL(π_{n-1} || π_n) penalty coefficient added to the adversary loss.
-    # Anchors the adversary's new distribution to the previous one. 0 disables.
     adversary_kl_penalty_coef: float = 1.0
 
-    # Inline-settling knobs. Everything here is a production parameter;
-    # there are no stage-gating flags.
     inline_settling: dict = {
         "settle_max_steps": 20,               # 2.0s / 0.1s control-step
         "invalid_settle_penalty": -1.0,       # teacher reward on forced-LIVE commits
@@ -196,7 +169,6 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
         max_grad_norm=1.0,
     )
 
-    # Adversary policy and algorithm
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -224,19 +196,8 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     adversary_param_extractor_fn = None
 
 
-# =============================================================================
-# AdversaryAdvancedEventCfg runner
-# =============================================================================
-
 @configclass
 class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
-    """Runner for advanced (parameter) adversary + policy training.
-
-    Same inline-settling pipeline as ``AdversaryBaseRunner``; the adversary's
-    action space is the full parameter set (friction, mass, armature, OSC
-    gains, etc.) instead of just the end-effector pose.
-    """
-
     class_name: str = "MultiAgentRunner"
     num_steps_per_env = 32
     max_iterations = 40000
@@ -252,8 +213,6 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
         "invalid_settle_penalty": -1.0,
         "max_resample_retries": 5,
         "adversary_update_batch_size": None,
-        # Parameter-only adversary: dataset resets are pre-validated, no
-        # SETTLING gate needed. Adversary reward = -ep_return per rollout.
         "skip_settling": True,
     }
 
@@ -290,7 +249,6 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
         max_grad_norm=1.0,
     )
 
-    # Advanced adversary policy and algorithm
     adversary_policy = RslRlFancyActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,
@@ -305,7 +263,7 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
         class_name="Reinforce",
         normalize_advantage_per_mini_batch=False,
         clip_param=0.2,
-        entropy_coef=0.05,  # bumped to maintain exploration across 30-D param action
+        entropy_coef=0.05,
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,

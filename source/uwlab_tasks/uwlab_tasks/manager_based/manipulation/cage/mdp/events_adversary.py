@@ -42,6 +42,150 @@ def _get_action_term_raw_actions(env: ManagerBasedEnv, action_name: str) -> torc
     return raw_actions
 
 
+class CageAdversaryResetRuntimeHooks:
+    """CAGE-specific runtime hooks used by the generic multi-agent runner."""
+
+    def __init__(self, env: ManagerBasedEnv, robot: Articulation):
+        self.env = env
+        self.robot = robot
+        self._settled_policy_observation = torch.zeros((env.num_envs, 36), dtype=torch.float32, device=env.device)
+        setattr(env, "_cage_adversary_settled_policy_observation", self._settled_policy_observation)
+        self._live_anchor_grasp_branch = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        self._live_anchor_branch_valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        # Rows: non-grasp branch, grasp branch. Columns: done count, task-success count.
+        self._branch_episode_stats = torch.zeros((2, 2), dtype=torch.float32, device=env.device)
+
+    def _tensor_attr(self, name: str, shape: tuple[int, ...]) -> torch.Tensor:
+        value = getattr(self.env, name, None)
+        if not isinstance(value, torch.Tensor) or value.shape != shape:
+            raise RuntimeError(f"CAGE runtime hook expected env.{name} with shape {shape}.")
+        return value
+
+    def capture_settled_policy_observation(self, obs, env_ids: torch.Tensor) -> None:
+        if env_ids.numel() == 0:
+            return
+        critic_obs = obs["critic"].detach().to(self._settled_policy_observation.device)
+        if critic_obs.shape[-1] < 43:
+            raise RuntimeError(f"Critic observation has dim {critic_obs.shape[-1]}, expected at least 43.")
+        # Critic prefix layout: insertive-in-receptive(6), prev_actions(7),
+        # joint_pos(12), ee_pose(6), insertive_pose(6), receptive_pose(6).
+        # The reset adversary should condition on state hardness, not the
+        # protagonist's previous action, so drop the 7D prev_actions block.
+        settled_context = torch.cat((critic_obs[:, 0:6], critic_obs[:, 13:43]), dim=-1)
+        target_ids = env_ids.to(self._settled_policy_observation.device)
+        self._settled_policy_observation[target_ids] = settled_context[target_ids]
+
+    def settling_gripper_targets(self, _default_action: float) -> torch.Tensor:
+        target = self._tensor_attr("_cage_adversary_gripper_action_target", (self.env.num_envs,))
+        return target.to(self.env.device, dtype=torch.float32).view(-1)
+
+    def apply_settling_state_targets(self, env_ids: torch.Tensor, write_state: bool = True) -> None:
+        if env_ids.numel() == 0:
+            return
+        expected_shape = (self.env.num_envs, self.robot.num_joints)
+        pos_target = self._tensor_attr("_cage_adversary_settling_robot_joint_pos_target", expected_shape)
+        vel_target = self._tensor_attr("_cage_adversary_settling_robot_joint_vel_target", expected_shape)
+        valid = self._tensor_attr("_cage_adversary_settling_robot_joint_target_valid", (self.env.num_envs,))
+        target_ids = env_ids.to(self.env.device)
+        valid_mask = valid[target_ids].to(dtype=torch.bool)
+        if not bool(valid_mask.all().item()):
+            bad = target_ids[~valid_mask][:10].detach().cpu().tolist()
+            raise RuntimeError(f"CAGE settling joint targets missing for SETTLING envs: {bad}")
+
+        joint_pos = pos_target[target_ids].to(self.env.device, dtype=torch.float32)
+        joint_vel = vel_target[target_ids].to(self.env.device, dtype=torch.float32)
+
+        if write_state:
+            self.robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=target_ids)
+        self.robot.set_joint_position_target(joint_pos, env_ids=target_ids)
+        self.robot.set_joint_velocity_target(joint_vel, env_ids=target_ids)
+        self.env.scene.write_data_to_sim()
+
+    def _reset_branch_values(self, env_ids: torch.Tensor) -> torch.Tensor:
+        branch = self._tensor_attr("_cage_reset_grasp_branch", (self.env.num_envs,))
+        valid = self._tensor_attr("_cage_reset_branch_valid", (self.env.num_envs,))
+        target_ids = env_ids.to(branch.device)
+        branch_valid = valid[target_ids].to(dtype=torch.bool)
+        if not bool(branch_valid.all().item()):
+            bad = target_ids[~branch_valid][:10].detach().cpu().tolist()
+            raise RuntimeError(f"CAGE branch tracking missing reset labels for envs: {bad}")
+        return branch[target_ids].to(self.env.device, dtype=torch.bool)
+
+    def on_live_anchor_start(self, env_ids: torch.Tensor) -> None:
+        if env_ids.numel() == 0:
+            return
+        branch_values = self._reset_branch_values(env_ids)
+        target_ids = env_ids.to(self.env.device)
+        self._live_anchor_grasp_branch[target_ids] = branch_values
+        self._live_anchor_branch_valid[target_ids] = True
+
+    def on_live_anchor_clear(self, env_ids: torch.Tensor) -> None:
+        if env_ids.numel() == 0:
+            return
+        self._live_anchor_branch_valid[env_ids.to(self.env.device)] = False
+
+    def on_live_episode_done(self, live_done_ids: torch.Tensor) -> None:
+        if live_done_ids.numel() == 0:
+            return
+
+        env_ids = live_done_ids.to(self.env.device)
+        tracked_ids = env_ids[self._live_anchor_branch_valid[env_ids]]
+        if tracked_ids.numel() == 0:
+            return
+
+        task_success_values = self._tensor_attr("_cage_task_command_last_episode_success", (self.env.num_envs,))
+        task_success_valid = self._tensor_attr("_cage_task_command_last_episode_success_valid", (self.env.num_envs,))
+        success_ids = tracked_ids.to(task_success_valid.device)
+        success_valid = task_success_valid[success_ids].to(self.env.device, dtype=torch.bool)
+        if not bool(success_valid.all().item()):
+            bad = tracked_ids[~success_valid][:10].detach().cpu().tolist()
+            raise RuntimeError(f"CAGE branch tracking found LIVE dones without command success labels: {bad}")
+
+        branches = self._live_anchor_grasp_branch[tracked_ids].to(torch.long)
+        task_successes = task_success_values[success_ids].to(self.env.device, dtype=torch.float32)
+        for branch_idx in (0, 1):
+            mask = branches == branch_idx
+            if not bool(mask.any().item()):
+                continue
+            self._branch_episode_stats[branch_idx, 0] += mask.sum().to(torch.float32)
+            self._branch_episode_stats[branch_idx, 1] += task_successes[mask].sum()
+
+    def consume_iter_metrics(self, is_distributed: bool = False) -> dict[str, float]:
+        stats = self._branch_episode_stats.reshape(-1).clone()
+
+        if is_distributed:
+            torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM)
+
+        self._branch_episode_stats.zero_()
+        if float(stats.sum().item()) <= 0.0:
+            return {}
+
+        episode_stats = stats.view(2, 2)
+        metrics: dict[str, float] = {}
+        branch_names = ("nongrasp", "grasp")
+        for branch_idx, branch_name in enumerate(branch_names):
+            count = episode_stats[branch_idx, 0]
+            task_success = episode_stats[branch_idx, 1]
+            if float(count.item()) > 0.0:
+                metrics[f"BranchSuccess/{branch_name}_task_success_rate"] = float((task_success / count).item())
+
+        total_count = episode_stats[:, 0].sum()
+        total_task_success = episode_stats[:, 1].sum()
+        if float(total_count.item()) > 0.0:
+            metrics["BranchSuccess/overall_task_success_rate"] = float((total_task_success / total_count).item())
+        return metrics
+
+    def format_iter_metrics(self, metrics: dict[str, float]) -> str | None:
+        if "BranchSuccess/overall_task_success_rate" not in metrics:
+            return None
+        return (
+            "BranchTaskSuccess: "
+            f"grasp_task_success_rate={metrics.get('BranchSuccess/grasp_task_success_rate', float('nan')):.4f} "
+            f"nongrasp_task_success_rate={metrics.get('BranchSuccess/nongrasp_task_success_rate', float('nan')):.4f} "
+            f"overall_task_success_rate={metrics.get('BranchSuccess/overall_task_success_rate', float('nan')):.4f}"
+        )
+
+
 def adversary_rigid_body_material_from_action(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
@@ -571,7 +715,18 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         self.gripper_range = torch.tensor(gripper_range, device=env.device)
 
         # Robot and IK solver
+        self.robot_asset_name: str = robot_ik_cfg.name
+        self.grasped_asset_name: str = grasped_asset_cfg.name
+        if robot_ik_cfg.body_names is None:
+            raise ValueError("adversary_reset_end_effector_from_action requires robot_ik_cfg.body_names.")
+        self.ee_body_name: str = (
+            robot_ik_cfg.body_names if isinstance(robot_ik_cfg.body_names, str) else robot_ik_cfg.body_names[0]
+        )
         self.robot: Articulation = env.scene[robot_ik_cfg.name]
+        setattr(env, "_multi_agent_runner_hooks", CageAdversaryResetRuntimeHooks(env, self.robot))
+        setattr(env, "_cage_grasp_survival_robot_asset_name", self.robot_asset_name)
+        setattr(env, "_cage_grasp_survival_object_asset_name", self.grasped_asset_name)
+        setattr(env, "_cage_grasp_survival_ee_body_name", self.ee_body_name)
         self.joint_ids: list[int] | slice = robot_ik_cfg.joint_ids
         self.n_joints: int = self.robot.num_joints if isinstance(self.joint_ids, slice) else len(self.joint_ids)
 
@@ -593,6 +748,30 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         # Action indices
         self.action_name: str = cfg.params["action_name"]
         self.action_start_index: int = cfg.params.get("action_start_index", 9)
+
+        self._settling_gripper_target = -torch.ones(env.num_envs, device=env.device, dtype=torch.float32)
+        self._settling_robot_joint_pos_target = self.robot.data.default_joint_pos.to(
+            env.device, dtype=torch.float32
+        ).clone()
+        self._settling_robot_joint_vel_target = torch.zeros(
+            (env.num_envs, self.robot.num_joints), device=env.device, dtype=torch.float32
+        )
+        self._settling_robot_joint_target_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        self._grasp_survival_expected_obj_pos_ee = torch.zeros(env.num_envs, 3, device=env.device, dtype=torch.float32)
+        self._grasp_survival_expected_obj_quat_ee = torch.zeros(env.num_envs, 4, device=env.device, dtype=torch.float32)
+        self._grasp_survival_expected_obj_quat_ee[:, 0] = 1.0
+        self._grasp_survival_reference_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        self._reset_grasp_branch = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        self._reset_branch_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        setattr(env, "_cage_adversary_gripper_action_target", self._settling_gripper_target)
+        setattr(env, "_cage_adversary_settling_robot_joint_pos_target", self._settling_robot_joint_pos_target)
+        setattr(env, "_cage_adversary_settling_robot_joint_vel_target", self._settling_robot_joint_vel_target)
+        setattr(env, "_cage_adversary_settling_robot_joint_target_valid", self._settling_robot_joint_target_valid)
+        setattr(env, "_cage_grasp_survival_expected_obj_pos_ee", self._grasp_survival_expected_obj_pos_ee)
+        setattr(env, "_cage_grasp_survival_expected_obj_quat_ee", self._grasp_survival_expected_obj_quat_ee)
+        setattr(env, "_cage_grasp_survival_reference_valid", self._grasp_survival_reference_valid)
+        setattr(env, "_cage_reset_grasp_branch", self._reset_grasp_branch)
+        setattr(env, "_cage_reset_branch_valid", self._reset_branch_valid)
 
     def _compute_grasp_dataset_path(self) -> str:
         usd_path = self.grasped_asset.cfg.spawn.usd_path
@@ -654,15 +833,49 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         closed_magnitude = torch.full_like(self.gripper_open_positions, float(self.gripper_range[1].item()))
         self.gripper_closed_positions = closed_sign * closed_magnitude
 
-    def _store_settling_gripper_targets(
-        self, env: ManagerBasedEnv, env_ids: torch.Tensor, gripper_action_targets: torch.Tensor
+    def _store_settling_gripper_targets(self, env_ids: torch.Tensor, gripper_action_targets: torch.Tensor) -> None:
+        env_ids = env_ids.to(self._settling_gripper_target.device)
+        self._settling_gripper_target[env_ids] = gripper_action_targets.to(
+            self._settling_gripper_target.device, dtype=self._settling_gripper_target.dtype
+        )
+
+    def _store_settling_robot_joint_targets(
+        self,
+        env_ids: torch.Tensor,
+        joint_position_targets: torch.Tensor,
+        joint_velocity_targets: torch.Tensor,
     ) -> None:
-        target_attr = "_cage_adversary_gripper_action_target"
-        target = getattr(env, target_attr, None)
-        if not isinstance(target, torch.Tensor) or target.shape != (env.num_envs,):
-            target = -torch.ones(env.num_envs, device=env.device, dtype=torch.float32)
-            setattr(env, target_attr, target)
-        target[env_ids] = gripper_action_targets.to(target.device, dtype=target.dtype)
+        env_ids = env_ids.to(self._settling_robot_joint_pos_target.device)
+        self._settling_robot_joint_pos_target[env_ids] = joint_position_targets.to(
+            self._settling_robot_joint_pos_target.device, dtype=self._settling_robot_joint_pos_target.dtype
+        )
+        self._settling_robot_joint_vel_target[env_ids] = joint_velocity_targets.to(
+            self._settling_robot_joint_vel_target.device, dtype=self._settling_robot_joint_vel_target.dtype
+        )
+        self._settling_robot_joint_target_valid[env_ids] = True
+
+    def _clear_grasp_survival_reference(self, env_ids: torch.Tensor) -> None:
+        self._grasp_survival_reference_valid[env_ids.to(self._grasp_survival_reference_valid.device)] = False
+
+    def _store_grasp_survival_reference(
+        self,
+        grasp_ids: torch.Tensor,
+        expected_obj_pos_ee: torch.Tensor,
+        expected_obj_quat_ee: torch.Tensor,
+    ) -> None:
+        grasp_ids = grasp_ids.to(self._grasp_survival_reference_valid.device)
+        self._grasp_survival_expected_obj_pos_ee[grasp_ids] = expected_obj_pos_ee.to(
+            self._grasp_survival_expected_obj_pos_ee.device, dtype=self._grasp_survival_expected_obj_pos_ee.dtype
+        )
+        self._grasp_survival_expected_obj_quat_ee[grasp_ids] = expected_obj_quat_ee.to(
+            self._grasp_survival_expected_obj_quat_ee.device, dtype=self._grasp_survival_expected_obj_quat_ee.dtype
+        )
+        self._grasp_survival_reference_valid[grasp_ids] = True
+
+    def _store_reset_branch_labels(self, env_ids: torch.Tensor, grasped_mask: torch.Tensor) -> None:
+        env_ids = env_ids.to(self._reset_grasp_branch.device)
+        self._reset_grasp_branch[env_ids] = grasped_mask.to(self._reset_grasp_branch.device, dtype=torch.bool)
+        self._reset_branch_valid[env_ids] = True
 
     def __call__(
         self,
@@ -687,6 +900,8 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         grasp_local = grasped_mask.nonzero(as_tuple=False).squeeze(-1)
         adv_ids = env_ids[adv_local]
         grasp_ids = env_ids[grasp_local]
+        self._store_reset_branch_labels(env_ids, grasped_mask)
+        self._clear_grasp_survival_reference(env_ids)
 
         pos_b, quat_b = self.solver._compute_frame_pose()
 
@@ -716,6 +931,12 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
                 self.rel_positions[grasp_indices],
                 self.rel_quaternions[grasp_indices],
             )
+            expected_obj_pos_ee, expected_obj_quat_ee = math_utils.subtract_frame_transforms(
+                grasp_pos_w,
+                grasp_quat_w,
+                self.grasped_asset.data.root_pos_w[grasp_ids],
+                self.grasped_asset.data.root_quat_w[grasp_ids],
+            )
             pos_b[grasp_ids], quat_b[grasp_ids] = math_utils.subtract_frame_transforms(
                 self.robot.data.root_link_pos_w[grasp_ids],
                 self.robot.data.root_link_quat_w[grasp_ids],
@@ -739,7 +960,6 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         num_gripper_joints = self.gripper_joint_positions.shape[1]
         gripper_positions = torch.zeros((num_envs, num_gripper_joints), device=env.device)
         gripper_action_targets = -torch.ones(num_envs, device=env.device, dtype=torch.float32)
-        adv_gripper_targets = torch.empty((0,), device=env.device, dtype=torch.float32)
 
         if adv_local.numel() > 0:
             adv_gripper_targets = torch.where(
@@ -765,5 +985,15 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
             joint_ids=self.gripper_joint_ids,
             env_ids=env_ids,
         )
-        self._store_settling_gripper_targets(env, env_ids, gripper_action_targets)
 
+        full_joint_pos = self.robot.data.joint_pos[env_ids].clone()
+        full_joint_pos[:, self.gripper_joint_list] = gripper_positions
+        full_joint_vel = torch.zeros_like(full_joint_pos)
+        self.robot.set_joint_position_target(full_joint_pos, env_ids=env_ids)
+        self.robot.set_joint_velocity_target(full_joint_vel, env_ids=env_ids)
+        env.scene.write_data_to_sim()
+
+        self._store_settling_gripper_targets(env_ids, gripper_action_targets)
+        self._store_settling_robot_joint_targets(env_ids, full_joint_pos, full_joint_vel)
+        if grasp_ids.numel() > 0:
+            self._store_grasp_survival_reference(grasp_ids, expected_obj_pos_ee, expected_obj_quat_ee)

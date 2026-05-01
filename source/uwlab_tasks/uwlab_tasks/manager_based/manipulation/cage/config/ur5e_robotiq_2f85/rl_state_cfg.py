@@ -823,6 +823,9 @@ class GenerationTerminationCfg:
             "max_object_pos_deviation": 0.05,
             "pos_z_threshold": -0.02,
             "consecutive_stability_steps": 5,
+            "validate_grasp_survival": True,
+            "grasp_survival_pos_threshold": 0.03,
+            "grasp_survival_rot_threshold": 0.75,
         },
         time_out=True,
     )

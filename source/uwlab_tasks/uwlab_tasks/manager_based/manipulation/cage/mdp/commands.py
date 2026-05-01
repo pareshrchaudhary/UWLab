@@ -118,6 +118,10 @@ class TaskCommand(TaskDependentCommand):
         # all-True keeps standard single-policy runs unchanged.
         self._live_mask = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
         self._prev_live_mask = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+        self._last_episode_success = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
+        self._last_episode_success_valid = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        setattr(self._env, "_cage_task_command_last_episode_success", self._last_episode_success)
+        setattr(self._env, "_cage_task_command_last_episode_success_valid", self._last_episode_success_valid)
 
     """
     Properties
@@ -187,7 +191,11 @@ class TaskCommand(TaskDependentCommand):
             env_ids_t = torch.as_tensor(list(env_ids), dtype=torch.long, device=self.device)
         live_ids = env_ids_t[self._live_mask[env_ids_t]]
         extras: dict[str, float] = {}
+
         for metric_name, metric_value in self.metrics.items():
+            if metric_name == "end_of_episode_success_rate":
+                self._last_episode_success[env_ids_t] = metric_value[env_ids_t]
+                self._last_episode_success_valid[env_ids_t] = self._live_mask[env_ids_t]
             if live_ids.numel() > 0:
                 extras[metric_name] = torch.mean(metric_value[live_ids]).item()
             metric_value[env_ids_t] = 0.0

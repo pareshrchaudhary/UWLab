@@ -237,6 +237,9 @@ class check_reset_state_success(ManagerTermBase):
         self.max_object_pos_deviation = cfg.params.get("max_object_pos_deviation")
         self.pos_z_threshold = cfg.params.get("pos_z_threshold")
         self.consecutive_stability_steps = cfg.params.get("consecutive_stability_steps", 5)
+        self.validate_grasp_survival = cfg.params.get("validate_grasp_survival", False)
+        self.grasp_survival_pos_threshold = cfg.params.get("grasp_survival_pos_threshold", 0.03)
+        self.grasp_survival_rot_threshold = cfg.params.get("grasp_survival_rot_threshold", 0.75)
 
         # Load gripper_approach_direction from metadata
         robot_asset = env.scene[self.robot_cfg.name]
@@ -279,6 +282,55 @@ class check_reset_state_success(ManagerTermBase):
             )
             self.require_assembly_success = torch.rand(env.num_envs, device=env.device) < self.assembly_success_prob
             self._pending_reflip = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+
+    def _grasp_tensor_attr(self, env: ManagerBasedEnv, name: str, shape: tuple[int, ...]) -> torch.Tensor:
+        value = getattr(env, name, None)
+        if not isinstance(value, torch.Tensor) or value.shape != shape:
+            raise RuntimeError(f"CAGE grasp survival validation expected env.{name} with shape {shape}.")
+        return value
+
+    def _apply_grasp_survival_filter(self, env: ManagerBasedEnv, reset_success: torch.Tensor) -> torch.Tensor:
+        if not self.validate_grasp_survival:
+            return reset_success
+
+        success_ids = reset_success.nonzero(as_tuple=False).squeeze(-1)
+        if success_ids.numel() == 0:
+            return reset_success
+
+        branch = self._grasp_tensor_attr(env, "_cage_reset_grasp_branch", (env.num_envs,))
+        branch_valid = self._grasp_tensor_attr(env, "_cage_reset_branch_valid", (env.num_envs,))
+        if not bool(branch_valid[success_ids].all().item()):
+            bad = success_ids[~branch_valid[success_ids]][:10].detach().cpu().tolist()
+            raise RuntimeError(f"CAGE grasp survival validation missing branch labels for reset-success envs: {bad}")
+
+        grasp_ids = success_ids[branch[success_ids]]
+        if grasp_ids.numel() == 0:
+            return reset_success
+
+        pos_ref = self._grasp_tensor_attr(env, "_cage_grasp_survival_expected_obj_pos_ee", (env.num_envs, 3))
+        quat_ref = self._grasp_tensor_attr(env, "_cage_grasp_survival_expected_obj_quat_ee", (env.num_envs, 4))
+        ref_valid = self._grasp_tensor_attr(env, "_cage_grasp_survival_reference_valid", (env.num_envs,))
+        if not bool(ref_valid[grasp_ids].all().item()):
+            bad = grasp_ids[~ref_valid[grasp_ids]][:10].detach().cpu().tolist()
+            raise RuntimeError(f"CAGE grasp survival validation missing object-in-EE references: {bad}")
+
+        object_asset_name = getattr(env, "_cage_grasp_survival_object_asset_name")
+        insertive_object = env.scene[object_asset_name]
+        ee_pos_w = self.robot_asset.data.body_link_pos_w[grasp_ids, self.ee_body_idx]
+        ee_quat_w = self.robot_asset.data.body_link_quat_w[grasp_ids, self.ee_body_idx]
+        obj_pos_w = insertive_object.data.root_pos_w[grasp_ids]
+        obj_quat_w = insertive_object.data.root_quat_w[grasp_ids]
+        cur_obj_pos_ee, cur_obj_quat_ee = math_utils.subtract_frame_transforms(
+            ee_pos_w, ee_quat_w, obj_pos_w, obj_quat_w
+        )
+
+        pos_err = torch.linalg.norm(cur_obj_pos_ee - pos_ref[grasp_ids].to(env.device), dim=-1)
+        rot_err = math_utils.quat_error_magnitude(cur_obj_quat_ee, quat_ref[grasp_ids].to(env.device))
+        survived = (pos_err < self.grasp_survival_pos_threshold) & (rot_err < self.grasp_survival_rot_threshold)
+
+        filtered_success = reset_success.clone()
+        filtered_success[grasp_ids] &= survived
+        return filtered_success
 
     def reset(self, env_ids: torch.Tensor | None = None) -> None:
         super().reset(env_ids)
@@ -328,6 +380,9 @@ class check_reset_state_success(ManagerTermBase):
         receptive_asset_cfg: SceneEntityCfg | None = None,
         assembly_success_prob: float | None = None,
         assembly_threshold_scale: float = 1.0,
+        validate_grasp_survival: bool = False,
+        grasp_survival_pos_threshold: float = 0.03,
+        grasp_survival_rot_threshold: float = 0.75,
     ) -> torch.Tensor:
 
         # Check time out
@@ -420,6 +475,10 @@ class check_reset_state_success(ManagerTermBase):
             assembly_success = (xyz_dist < self.assembly_pos_threshold) & (euler_xy_dist < self.assembly_ori_threshold)
             assembly_match = torch.where(self.require_assembly_success, assembly_success, ~assembly_success)
             reset_success = reset_success & assembly_match
+
+        reset_success = self._apply_grasp_survival_filter(env, reset_success)
+
+        if self.assembly_success_prob is not None:
             self._pending_reflip |= reset_success
 
         return reset_success
