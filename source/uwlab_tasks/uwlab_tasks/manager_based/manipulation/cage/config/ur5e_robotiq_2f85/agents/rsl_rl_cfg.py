@@ -144,14 +144,14 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     # validated start state before the env flips to SETTLING with a fresh
     # proposal. Regret = max-mean over these K returns, attributed to the
     # adversary's proposal as its learning signal.
-    regret_k: int = 6
+    regret_k: int = 9
     # Weight on the raw gen_reward term when combining with regret:
     # ``combined = beta_gen_reward * gen_reward + regret``. 0 disables shaping
     # and leaves regret as the sole signal.
     beta_gen_reward: float = 1.0
     # KL(π_{n-1} || π_n) penalty coefficient added to the adversary loss.
     # Anchors the adversary's new distribution to the previous one. 0 disables.
-    adversary_kl_penalty_coef: float = 0.0
+    adversary_kl_penalty_coef: float = 1.0
 
     # Inline-settling knobs. Everything here is a production parameter;
     # there are no stage-gating flags.
@@ -215,7 +215,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
-        schedule="adaptive",
+        schedule="fixed",
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
