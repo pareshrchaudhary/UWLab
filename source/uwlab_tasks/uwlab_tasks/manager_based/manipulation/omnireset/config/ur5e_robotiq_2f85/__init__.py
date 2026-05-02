@@ -150,6 +150,55 @@ gym.register(
     },
 )
 
+# Sim2real benchmark variants (V4+): one variant per test, branching from the
+# Stage-1 EvalCfg parent. Add a Finetune mirror later if a Stage-2 checkpoint
+# needs the same sweep against deployment-like physics.
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV4",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV4",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV5",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV5",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV6",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV6",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV7",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV7",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+gym.register(
+    id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-EvalCfgV8",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.eval_cfg:Ur5eRobotiq2f85RelCartesianOSCEvalCfgV8",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+
 gym.register(
     id="OmniReset-Ur5eRobotiq2f85-RelCartesianOSC-State-Finetune-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",

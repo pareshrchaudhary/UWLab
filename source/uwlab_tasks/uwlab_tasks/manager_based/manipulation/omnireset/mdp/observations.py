@@ -16,6 +16,67 @@ from uwlab_tasks.manager_based.manipulation.omnireset.assembly_keypoints import 
 from uwlab_tasks.manager_based.manipulation.omnireset.mdp import utils
 
 
+class target_asset_pose_with_perception_noise(ManagerTermBase):
+    """target_asset_pose_in_root_asset_frame with perception error injected.
+
+    Supports two error modes (the real-world perception chain has both):
+
+    - **Per-step Gaussian noise** (``trans_std`` [m], ``rot_std`` [rad]):
+      models per-frame jitter in the perception system.
+    - **Per-episode bias** (``trans_bias_std`` [m], ``rot_bias_std`` [rad]):
+      models systematic calibration / pose-estimation offset that stays
+      constant within an episode and resamples on reset. This is typically
+      the dominant real-world failure mode for vision-driven insertion —
+      the policy believes the hole is at a wrong location and aims there.
+
+    All four params default to 0 so the obs is unchanged unless overridden
+    at eval time. Used by the V6 sim2real proxy (test #3).
+    """
+
+    def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        device = env.device
+        self.trans_bias = torch.zeros(env.num_envs, 3, device=device)
+        self.rot_bias = torch.zeros(env.num_envs, 3, device=device)
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        target_asset_cfg: SceneEntityCfg,
+        root_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+        rotation_repr: str = "axis_angle",
+        trans_std: float = 0.0,
+        rot_std: float = 0.0,
+        trans_bias_std: float = 0.0,
+        rot_bias_std: float = 0.0,
+    ):
+        # resample bias for any env that just reset (episode_length_buf == 0)
+        if (trans_bias_std > 0.0 or rot_bias_std > 0.0) and hasattr(env, "episode_length_buf"):
+            new_ep = (env.episode_length_buf == 0).nonzero(as_tuple=False).flatten()
+            if len(new_ep) > 0:
+                if trans_bias_std > 0.0:
+                    self.trans_bias[new_ep] = trans_bias_std * torch.randn(len(new_ep), 3, device=env.device)
+                else:
+                    self.trans_bias[new_ep] = 0.0
+                if rot_bias_std > 0.0:
+                    self.rot_bias[new_ep] = rot_bias_std * torch.randn(len(new_ep), 3, device=env.device)
+                else:
+                    self.rot_bias[new_ep] = 0.0
+
+        pose = target_asset_pose_in_root_asset_frame(
+            env, target_asset_cfg, root_asset_cfg, rotation_repr=rotation_repr
+        )
+        if trans_std > 0.0:
+            pose[:, :3] = pose[:, :3] + trans_std * torch.randn_like(pose[:, :3])
+        if rot_std > 0.0:
+            pose[:, 3:] = pose[:, 3:] + rot_std * torch.randn_like(pose[:, 3:])
+        if trans_bias_std > 0.0:
+            pose[:, :3] = pose[:, :3] + self.trans_bias
+        if rot_bias_std > 0.0:
+            pose[:, 3:] = pose[:, 3:] + self.rot_bias
+        return pose
+
+
 def target_asset_pose_in_root_asset_frame(
     env: ManagerBasedEnv,
     target_asset_cfg: SceneEntityCfg,

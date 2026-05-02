@@ -2387,3 +2387,80 @@ class implicit_to_explicit_swap(ManagerTermBase):
             return {"actuator_swapped": False, "scale_progress": self._sysid_term.scale_progress}
 
         return self._do_swap(env)
+
+
+class apply_peg_grasp_offset(ManagerTermBase):
+    """Reset-mode event: perturb the peg's pose relative to the end-effector.
+
+    Models real-world grasp imperfection — every grasp leaves the peg at a
+    slightly different SE(3) offset from the gripper's nominal grasp frame.
+    Run *after* the existing reset chain has placed the peg; this event reads
+    the post-reset peg world pose, transforms it into EE frame, adds a small
+    Gaussian SE(3) perturbation, and writes the perturbed pose back to sim.
+    The gripper-peg friction then carries that offset through the episode.
+
+    Params:
+        insertive_asset_cfg: peg asset (typically SceneEntityCfg("insertive_object"))
+        ee_asset_cfg: EE body (typically SceneEntityCfg("robot", body_names="wrist_3_link"))
+        trans_std: translation std in metres
+        rot_std: rotation std in radians (small-angle XYZ Euler)
+
+    Defaults to zero — variant is a no-op without overrides.
+    """
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        self.insertive_asset_cfg: SceneEntityCfg = cfg.params["insertive_asset_cfg"]
+        self.ee_asset_cfg: SceneEntityCfg = cfg.params["ee_asset_cfg"]
+        self._peg: RigidObject = env.scene[self.insertive_asset_cfg.name]
+        self._robot: Articulation = env.scene[self.ee_asset_cfg.name]
+        ee_body_ids, _ = self._robot.find_bodies(self.ee_asset_cfg.body_names)
+        assert len(ee_body_ids) == 1, "ee_asset_cfg.body_names must resolve to exactly one body"
+        self._ee_body_idx = ee_body_ids[0]
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        insertive_asset_cfg: SceneEntityCfg,
+        ee_asset_cfg: SceneEntityCfg,
+        trans_std: float = 0.0,
+        rot_std: float = 0.0,
+    ):
+        if trans_std <= 0.0 and rot_std <= 0.0:
+            return
+        if env_ids is None:
+            env_ids = torch.arange(env.scene.num_envs, device=self._robot.device)
+        device = self._robot.device
+
+        peg_w_pos = self._peg.data.root_pos_w[env_ids]
+        peg_w_quat = self._peg.data.root_quat_w[env_ids]
+        ee_w_pos = self._robot.data.body_link_pos_w[env_ids, self._ee_body_idx]
+        ee_w_quat = self._robot.data.body_link_quat_w[env_ids, self._ee_body_idx]
+
+        peg_in_ee_pos, peg_in_ee_quat = math_utils.subtract_frame_transforms(
+            ee_w_pos, ee_w_quat, peg_w_pos, peg_w_quat
+        )
+
+        n = len(env_ids)
+        delta_pos = torch.zeros(n, 3, device=device)
+        delta_quat = torch.zeros(n, 4, device=device)
+        delta_quat[:, 0] = 1.0
+        if trans_std > 0.0:
+            delta_pos = trans_std * torch.randn(n, 3, device=device)
+        if rot_std > 0.0:
+            euler = rot_std * torch.randn(n, 3, device=device)
+            delta_quat = math_utils.quat_from_euler_xyz(euler[:, 0], euler[:, 1], euler[:, 2])
+
+        new_peg_in_ee_pos = peg_in_ee_pos + delta_pos
+        new_peg_in_ee_quat = math_utils.quat_mul(peg_in_ee_quat, delta_quat)
+        new_peg_w_pos, new_peg_w_quat = math_utils.combine_frame_transforms(
+            ee_w_pos, ee_w_quat, new_peg_in_ee_pos, new_peg_in_ee_quat
+        )
+
+        new_pose = torch.cat([new_peg_w_pos, new_peg_w_quat], dim=-1)
+        self._peg.write_root_pose_to_sim(new_pose, env_ids=env_ids)
+        # zero peg velocity so the offset settles cleanly
+        self._peg.write_root_velocity_to_sim(
+            torch.zeros(n, 6, device=device), env_ids=env_ids
+        )
