@@ -13,38 +13,10 @@ from uwlab_rl.rsl_rl.rl_cfg import (
     RslRlFancyPpoAlgorithmCfg,
 )
 
-from rsl_rl.utils.logger import extract_cage_physics_params
-
 from uwlab_tasks.manager_based.manipulation.cage.mdp.actions.adversary_actions_cfg import (
     ADVERSARY_ADVANCED_ACTION_DIM,
     ADVERSARY_POSE_ACTION_DIM,
 )
-
-CAGE_ADVERSARY_PARAMETER_NAMES = [
-    "receptive_object_x", "receptive_object_y", "receptive_object_yaw",
-    "insertive_object_rel_x", "insertive_object_rel_y", "insertive_object_rel_z",
-    "insertive_object_rel_roll", "insertive_object_rel_pitch", "insertive_object_rel_yaw",
-    "end_effector_rel_x", "end_effector_rel_y", "end_effector_rel_z",
-    "end_effector_rel_roll", "end_effector_rel_pitch", "end_effector_rel_yaw",
-]
-
-CAGE_ADVERSARY_ADVANCED_PARAMETER_NAMES = [
-    "robot_static_friction", "robot_dynamic_friction",
-    "insertive_object_static_friction", "insertive_object_dynamic_friction",
-    "receptive_object_static_friction", "receptive_object_dynamic_friction",
-    "table_static_friction", "table_dynamic_friction",
-    "robot_mass_scale", "insertive_object_mass_abs",
-    "receptive_object_mass_scale", "table_mass_scale",
-    "arm_armature_shoulder_pan", "arm_armature_shoulder_lift",
-    "arm_armature_elbow", "arm_armature_wrist_1",
-    "arm_armature_wrist_2", "arm_armature_wrist_3",
-    "arm_friction_shoulder_pan", "arm_friction_shoulder_lift",
-    "arm_friction_elbow", "arm_friction_wrist_1",
-    "arm_friction_wrist_2", "arm_friction_wrist_3",
-    "gripper_stiffness_scale", "gripper_damping_scale",
-    "osc_kp_xyz_scale", "osc_kp_rpy_scale",
-    "osc_damping_ratio_xyz_scale", "osc_damping_ratio_rpy_scale",
-]
 
 
 def my_experts_observation_func(env):
@@ -124,13 +96,15 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     save_interval = 100
     experiment_name = "cage_adversary_base"
 
-    regret_k: int = 9
+    regret_k: int = 3
     beta_gen_reward: float = 1.0
 
     inline_settling: dict = {
         "settle_max_steps": 20,               # 2.0s / 0.1s control-step
-        "invalid_settle_penalty": -1.0,       # teacher reward on forced-LIVE commits
-        "max_resample_retries": 5,            # per-env settle attempts before giving up
+        "invalid_settle_penalty": -1.0,       # teacher reward for exhausted settle proposals
+        "max_resample_retries": 20,           # avoid hard LIVE shifts from early settle failures
+        "force_live_after_max_retries": False,
+        "live_handoff_hold_steps": 4,         # mask PPO while holding the validated reset pose
         "adversary_update_batch_size": None,  # None ⇒ num_envs (per-rank)
         "settling_gripper_default_action": -1.0,
     }
@@ -186,13 +160,11 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
         num_learning_epochs=1,
         num_mini_batches=1,
         learning_rate=1.0e-4,
-        schedule="fixed",
-        desired_kl=0.01,
+        schedule="adaptive",
+        desired_kl=0.003,
         max_grad_norm=1.0,
     )
     adversary_robot_parameters = ADVERSARY_POSE_ACTION_DIM
-    adversary_parameter_names = CAGE_ADVERSARY_PARAMETER_NAMES
-    adversary_param_extractor_fn = None
 
 
 @configclass
@@ -209,7 +181,7 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
     inline_settling: dict = {
         "settle_max_steps": 20,
         "invalid_settle_penalty": -1.0,
-        "max_resample_retries": 5,
+        "max_resample_retries": 20,
         "adversary_update_batch_size": None,
         "skip_settling": True,
     }
@@ -270,5 +242,3 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
         max_grad_norm=1.0,
     )
     adversary_robot_parameters = ADVERSARY_ADVANCED_ACTION_DIM
-    adversary_parameter_names = CAGE_ADVERSARY_ADVANCED_PARAMETER_NAMES
-    adversary_param_extractor_fn = extract_cage_physics_params

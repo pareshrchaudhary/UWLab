@@ -18,6 +18,13 @@ from uwlab_tasks.manager_based.manipulation.cage.mdp import utils
 
 from ..assembly_keypoints import Offset
 from .collision_analyzer_cfg import CollisionAnalyzerCfg
+from .pose_delta_adversary import (
+    POSE_DELTA_ACCEPTED_RECORDS_ATTR,
+    POSE_DELTA_CANDIDATE_ACTION_ATTR,
+    POSE_DELTA_CANDIDATE_VALID_ATTR,
+    POSE_DELTA_COMMITTED_ACTION_ATTR,
+    commit_pose_delta_candidate_tensors,
+)
 
 
 def _check_obb_overlap(centroids_a, axes_a, half_extents_a, centroids_b, axes_b, half_extents_b) -> torch.Tensor:
@@ -220,6 +227,24 @@ class check_grasp_success(ManagerTermBase):
 class check_reset_state_success(ManagerTermBase):
     """Check if grasp is successful based on object stability, gripper closure, and collision detection."""
 
+    _SUCCESS_STATE_ATTR = "_cage_reset_success_scene_state"
+    _SUCCESS_STATE_VALID_ATTR = "_cage_reset_success_scene_state_valid"
+    _SUCCESS_METADATA_ATTR = "_cage_reset_success_metadata"
+    _SUCCESS_METADATA_TENSOR_ATTRS = (
+        "_cage_adversary_gripper_action_target",
+        "_cage_adversary_settling_robot_joint_pos_target",
+        "_cage_adversary_settling_robot_joint_vel_target",
+        "_cage_adversary_settling_robot_joint_target_valid",
+        "_cage_grasp_survival_expected_obj_pos_ee",
+        "_cage_grasp_survival_expected_obj_quat_ee",
+        "_cage_grasp_survival_reference_valid",
+        "_cage_reset_grasp_branch",
+        "_cage_reset_branch_valid",
+        POSE_DELTA_COMMITTED_ACTION_ATTR,
+        POSE_DELTA_CANDIDATE_ACTION_ATTR,
+        POSE_DELTA_CANDIDATE_VALID_ATTR,
+    )
+
     def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
 
@@ -283,13 +308,112 @@ class check_reset_state_success(ManagerTermBase):
             self.require_assembly_success = torch.rand(env.num_envs, device=env.device) < self.assembly_success_prob
             self._pending_reflip = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
 
+        setattr(env, self._SUCCESS_STATE_VALID_ATTR, torch.zeros(env.num_envs, device=env.device, dtype=torch.bool))
+
     def _grasp_tensor_attr(self, env: ManagerBasedEnv, name: str, shape: tuple[int, ...]) -> torch.Tensor:
         value = getattr(env, name, None)
         if not isinstance(value, torch.Tensor) or value.shape != shape:
             raise RuntimeError(f"CAGE grasp survival validation expected env.{name} with shape {shape}.")
         return value
 
-    def _apply_grasp_survival_filter(self, env: ManagerBasedEnv, reset_success: torch.Tensor) -> torch.Tensor:
+    def _empty_scene_state_like(self, value):
+        if isinstance(value, dict):
+            return {key: self._empty_scene_state_like(child) for key, child in value.items()}
+        return torch.zeros_like(value)
+
+    def _copy_scene_state_ids(self, dst, src, env_ids: torch.Tensor) -> None:
+        if isinstance(src, dict):
+            for key, child in src.items():
+                self._copy_scene_state_ids(dst[key], child, env_ids)
+            return
+        dst[env_ids] = src[env_ids].clone()
+
+    def _cache_reset_success_state(self, env: ManagerBasedEnv, reset_success: torch.Tensor) -> None:
+        success_ids = reset_success.nonzero(as_tuple=False).squeeze(-1)
+        if success_ids.numel() == 0:
+            return
+
+        scene_state = env.scene.get_state(is_relative=True)
+        cached_state = getattr(env, self._SUCCESS_STATE_ATTR, None)
+        if not isinstance(cached_state, dict):
+            cached_state = self._empty_scene_state_like(scene_state)
+            setattr(env, self._SUCCESS_STATE_ATTR, cached_state)
+
+        valid = getattr(env, self._SUCCESS_STATE_VALID_ATTR, None)
+        if not isinstance(valid, torch.Tensor) or valid.shape != (env.num_envs,):
+            valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+            setattr(env, self._SUCCESS_STATE_VALID_ATTR, valid)
+
+        self._copy_scene_state_ids(cached_state, scene_state, success_ids)
+        valid[success_ids] = True
+
+        cached_metadata = getattr(env, self._SUCCESS_METADATA_ATTR, None)
+        if not isinstance(cached_metadata, dict):
+            cached_metadata = {}
+            setattr(env, self._SUCCESS_METADATA_ATTR, cached_metadata)
+        for attr_name in self._SUCCESS_METADATA_TENSOR_ATTRS:
+            value = getattr(env, attr_name, None)
+            if not isinstance(value, torch.Tensor) or value.shape[0] != env.num_envs:
+                continue
+            cached_value = cached_metadata.get(attr_name)
+            if not isinstance(cached_value, torch.Tensor) or cached_value.shape != value.shape:
+                cached_value = torch.zeros_like(value)
+                cached_metadata[attr_name] = cached_value
+            cached_value[success_ids.to(cached_value.device)] = value[success_ids.to(value.device)].to(
+                device=cached_value.device, dtype=cached_value.dtype
+            ).clone()
+
+    def _settling_resolution_mask(self, env: ManagerBasedEnv, time_out: torch.Tensor) -> torch.Tensor:
+        task_command = None
+        try:
+            task_command = env.command_manager.get_term("task_command")
+        except (AttributeError, KeyError, ValueError):
+            task_command = None
+        live_mask = getattr(task_command, "_live_mask", None)
+        if isinstance(live_mask, torch.Tensor) and live_mask.numel() == env.num_envs:
+            return time_out & ~live_mask.to(device=env.device, dtype=torch.bool).view(-1)
+        return time_out
+
+    def _commit_adversary_pose_candidate(self, env: ManagerBasedEnv, settling_success: torch.Tensor) -> None:
+        if not bool(settling_success.any().item()):
+            return
+
+        committed = getattr(env, POSE_DELTA_COMMITTED_ACTION_ATTR, None)
+        candidate = getattr(env, POSE_DELTA_CANDIDATE_ACTION_ATTR, None)
+        candidate_valid = getattr(env, POSE_DELTA_CANDIDATE_VALID_ATTR, None)
+        if not (
+            isinstance(committed, torch.Tensor)
+            and isinstance(candidate, torch.Tensor)
+            and isinstance(candidate_valid, torch.Tensor)
+            and committed.shape == candidate.shape
+            and committed.ndim == 2
+            and candidate_valid.shape == (env.num_envs,)
+        ):
+            return
+
+        valid_candidate = candidate_valid.to(device=settling_success.device, dtype=torch.bool)
+        accepted_ids = (settling_success & valid_candidate).nonzero(as_tuple=False).squeeze(-1)
+        if accepted_ids.numel() > 0:
+            target_ids = accepted_ids.to(committed.device)
+            source_ids = accepted_ids.to(candidate.device)
+            previous = committed[target_ids].detach().clone()
+            accepted = candidate[source_ids].to(device=committed.device, dtype=committed.dtype).detach().clone()
+            records = getattr(env, POSE_DELTA_ACCEPTED_RECORDS_ATTR, None)
+            if not isinstance(records, list):
+                records = []
+                setattr(env, POSE_DELTA_ACCEPTED_RECORDS_ATTR, records)
+            records.append(
+                {
+                    "accepted_reset_env_ids": accepted_ids.detach().clone(),
+                    "accepted_reset_states": accepted,
+                    "accepted_reset_deltas": accepted - previous,
+                }
+            )
+        commit_pose_delta_candidate_tensors(committed, candidate, candidate_valid, settling_success)
+
+    def _apply_grasp_survival_filter(
+        self, env: ManagerBasedEnv, reset_success: torch.Tensor
+    ) -> torch.Tensor:
         if not self.validate_grasp_survival:
             return reset_success
 
@@ -477,6 +601,9 @@ class check_reset_state_success(ManagerTermBase):
             reset_success = reset_success & assembly_match
 
         reset_success = self._apply_grasp_survival_filter(env, reset_success)
+        settling_success = reset_success & self._settling_resolution_mask(env, time_out)
+        self._commit_adversary_pose_candidate(env, settling_success)
+        self._cache_reset_success_state(env, settling_success)
 
         if self.assembly_success_prob is not None:
             self._pending_reflip |= reset_success

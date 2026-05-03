@@ -39,7 +39,7 @@ parser.add_argument(
     "--record_parameters",
     action="store_false",
     default=True,
-    help="Adversary parameter HDF5 recording is on by default; pass --record_parameters to disable.",
+    help="Accepted adversary reset-state HDF5 recording is on by default; pass --record_parameters to disable.",
 )
 parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."

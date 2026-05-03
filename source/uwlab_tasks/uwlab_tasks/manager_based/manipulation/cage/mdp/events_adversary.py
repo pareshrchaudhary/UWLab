@@ -26,6 +26,15 @@ from uwlab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActi
 from uwlab_tasks.manager_based.manipulation.cage.mdp import utils
 
 from ..assembly_keypoints import Offset
+from .pose_delta_adversary import (
+    POSE_DELTA_ACCEPTED_RECORDS_ATTR,
+    POSE_DELTA_CANDIDATE_ACTION_ATTR,
+    POSE_DELTA_CANDIDATE_VALID_ATTR,
+    POSE_DELTA_COMMITTED_ACTION_ATTR,
+    POSE_RESET_DELTA_NAMES,
+    POSE_RESET_STATE_NAMES,
+    compute_pose_delta_candidate,
+)
 
 
 def _get_action_term_raw_actions(env: ManagerBasedEnv, action_name: str) -> torch.Tensor:
@@ -42,8 +51,100 @@ def _get_action_term_raw_actions(env: ManagerBasedEnv, action_name: str) -> torc
     return raw_actions
 
 
+def _as_1d_action_tensor(value, device: torch.device, name: str) -> torch.Tensor:
+    tensor = torch.as_tensor(value, dtype=torch.float32, device=device)
+    if tensor.ndim != 1:
+        raise ValueError(f"{name} must be a 1D sequence, got shape {tuple(tensor.shape)}.")
+    return tensor
+
+
+def _get_pose_delta_candidate_actions(env: ManagerBasedEnv, env_ids: torch.Tensor) -> torch.Tensor:
+    candidate = getattr(env, POSE_DELTA_CANDIDATE_ACTION_ATTR, None)
+    valid = getattr(env, POSE_DELTA_CANDIDATE_VALID_ATTR, None)
+    if not (
+        isinstance(candidate, torch.Tensor)
+        and isinstance(valid, torch.Tensor)
+        and candidate.ndim == 2
+        and valid.ndim == 1
+        and candidate.shape[0] == env.num_envs
+        and valid.shape[0] == env.num_envs
+    ):
+        raise RuntimeError(
+            "CAGE pose reset expected a prepared delta candidate. "
+            "Add adversary_prepare_pose_delta_action before pose reset events."
+        )
+
+    target_ids = env_ids.to(candidate.device)
+    if target_ids.numel() > 0 and not bool(valid[target_ids].all().item()):
+        bad = env_ids[~valid[target_ids].to(env_ids.device)][:10].detach().cpu().tolist()
+        raise RuntimeError(f"CAGE pose reset missing prepared delta candidates for envs: {bad}")
+    return candidate[target_ids].to(device=env.device, dtype=torch.float32)
+
+
+class adversary_prepare_pose_delta_action(ManagerTermBase):
+    """Prepare continuous reset actions from raw adversary delta commands."""
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+
+        self.action_name: str = cfg.params["action_name"]
+        self.action_low = _as_1d_action_tensor(cfg.params["action_low"], env.device, "action_low")
+        self.action_high = _as_1d_action_tensor(cfg.params["action_high"], env.device, "action_high")
+        self.neutral_action = _as_1d_action_tensor(cfg.params["neutral_action"], env.device, "neutral_action")
+        self.delta_scale = _as_1d_action_tensor(cfg.params["delta_scale"], env.device, "delta_scale")
+        self.action_dim = int(self.action_low.numel())
+        for name, tensor in (
+            ("action_high", self.action_high),
+            ("neutral_action", self.neutral_action),
+            ("delta_scale", self.delta_scale),
+        ):
+            if tensor.shape != self.action_low.shape:
+                raise ValueError(
+                    f"{name} shape {tuple(tensor.shape)} must match action_low {tuple(self.action_low.shape)}."
+                )
+        if not bool((self.action_low <= self.action_high).all().item()):
+            raise ValueError("action_low must be <= action_high for every CAGE pose adversary dimension.")
+
+        self._committed_action = self.neutral_action.unsqueeze(0).repeat(env.num_envs, 1).clone()
+        self._candidate_action = self._committed_action.clone()
+        self._candidate_valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        setattr(env, POSE_DELTA_COMMITTED_ACTION_ATTR, self._committed_action)
+        setattr(env, POSE_DELTA_CANDIDATE_ACTION_ATTR, self._candidate_action)
+        setattr(env, POSE_DELTA_CANDIDATE_VALID_ATTR, self._candidate_valid)
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        action_name: str = "adversaryaction",
+        action_low: tuple[float, ...] = (),
+        action_high: tuple[float, ...] = (),
+        neutral_action: tuple[float, ...] = (),
+        delta_scale: tuple[float, ...] = (),
+    ) -> None:
+        raw_actions = _get_action_term_raw_actions(env, self.action_name)
+        env_ids_dev = env_ids.to(raw_actions.device)
+        raw_delta = raw_actions[env_ids_dev, : self.action_dim].to(env.device, dtype=torch.float32)
+
+        target_ids = env_ids.to(self._committed_action.device)
+        committed = self._committed_action[target_ids]
+        candidate = compute_pose_delta_candidate(
+            raw_delta,
+            committed,
+            self.delta_scale,
+            self.action_low,
+            self.action_high,
+        )
+        self._candidate_action[target_ids] = candidate.to(self._candidate_action.device)
+        self._candidate_valid[target_ids] = True
+
+
 class CageAdversaryResetRuntimeHooks:
     """CAGE-specific runtime hooks used by the generic multi-agent runner."""
+
+    _SUCCESS_STATE_ATTR = "_cage_reset_success_scene_state"
+    _SUCCESS_STATE_VALID_ATTR = "_cage_reset_success_scene_state_valid"
+    _SUCCESS_METADATA_ATTR = "_cage_reset_success_metadata"
 
     def __init__(self, env: ManagerBasedEnv, robot: Articulation):
         self.env = env
@@ -60,6 +161,91 @@ class CageAdversaryResetRuntimeHooks:
         if not isinstance(value, torch.Tensor) or value.shape != shape:
             raise RuntimeError(f"CAGE runtime hook expected env.{name} with shape {shape}.")
         return value
+
+    def _clone_scene_state(self, state):
+        if isinstance(state, dict):
+            return {key: self._clone_scene_state(value) for key, value in state.items()}
+        return state.clone()
+
+    def _copy_scene_state_ids(self, dst, src, env_ids: torch.Tensor) -> None:
+        if isinstance(src, dict):
+            for key, value in src.items():
+                self._copy_scene_state_ids(dst[key], value, env_ids)
+            return
+        target_ids = env_ids.to(dst.device)
+        source_ids = env_ids.to(src.device)
+        dst[target_ids] = src[source_ids].to(device=dst.device, dtype=dst.dtype).clone()
+
+    def _restore_reset_success_metadata(self, env_ids: torch.Tensor) -> None:
+        cached_metadata = getattr(self.env, self._SUCCESS_METADATA_ATTR, None)
+        if not isinstance(cached_metadata, dict):
+            return
+        for attr_name, cached_value in cached_metadata.items():
+            target = getattr(self.env, attr_name, None)
+            if not (
+                isinstance(target, torch.Tensor)
+                and isinstance(cached_value, torch.Tensor)
+                and target.shape == cached_value.shape
+            ):
+                continue
+            target_ids = env_ids.to(target.device)
+            source_ids = env_ids.to(cached_value.device)
+            target[target_ids] = cached_value[source_ids].to(device=target.device, dtype=target.dtype).clone()
+
+    def consume_reset_success_state(self, env_ids: torch.Tensor, fallback_state: dict) -> dict:
+        """Return the termination-time reset state before Isaac's internal reset clears it."""
+        if env_ids.numel() == 0:
+            return fallback_state
+
+        cached_state = getattr(self.env, self._SUCCESS_STATE_ATTR, None)
+        valid = getattr(self.env, self._SUCCESS_STATE_VALID_ATTR, None)
+        if not isinstance(cached_state, dict) or not isinstance(valid, torch.Tensor):
+            return fallback_state
+        if valid.numel() != self.env.num_envs:
+            return fallback_state
+
+        target_ids = env_ids.to(valid.device)
+        hit_mask = valid[target_ids].to(dtype=torch.bool)
+        hit_count = int(hit_mask.sum().item())
+        if hit_count == 0:
+            return fallback_state
+
+        hit_ids = env_ids[hit_mask.to(env_ids.device)]
+        merged_state = self._clone_scene_state(fallback_state)
+        self._copy_scene_state_ids(merged_state, cached_state, hit_ids)
+        self._restore_reset_success_metadata(hit_ids)
+        valid[target_ids[hit_mask]] = False
+        return merged_state
+
+    @staticmethod
+    def _reset_manager(manager, env_ids: torch.Tensor) -> bool:
+        reset = getattr(manager, "reset", None)
+        if not callable(reset):
+            return False
+        reset(env_ids)
+        return True
+
+    def on_runner_state_written(self, env_ids: torch.Tensor) -> None:
+        """Refresh IsaacLab managers after the runner restores a cached scene state."""
+        if env_ids.numel() == 0:
+            return
+        target_ids = env_ids.to(self.env.device)
+
+        observation_manager = getattr(self.env, "observation_manager", None)
+        if not self._reset_manager(observation_manager, target_ids):
+            history_buffers = getattr(observation_manager, "_group_obs_term_history_buffer", {})
+            for group_buffers in history_buffers.values():
+                for circular_buffer in group_buffers.values():
+                    circular_buffer.reset(batch_ids=target_ids)
+
+        action_manager = getattr(self.env, "action_manager", None)
+        self._reset_manager(action_manager, target_ids)
+        prev_action = getattr(action_manager, "_prev_action", None)
+        if isinstance(prev_action, torch.Tensor):
+            prev_action[target_ids.to(prev_action.device)] = 0.0
+
+        termination_manager = getattr(self.env, "termination_manager", None)
+        self._reset_manager(termination_manager, target_ids)
 
     def capture_settled_policy_observation(self, obs, env_ids: torch.Tensor) -> None:
         if env_ids.numel() == 0:
@@ -151,6 +337,7 @@ class CageAdversaryResetRuntimeHooks:
             self._branch_episode_stats[branch_idx, 1] += task_successes[mask].sum()
 
     def consume_iter_metrics(self, is_distributed: bool = False) -> dict[str, float]:
+        metrics: dict[str, float] = {}
         stats = self._branch_episode_stats.reshape(-1).clone()
 
         if is_distributed:
@@ -158,10 +345,9 @@ class CageAdversaryResetRuntimeHooks:
 
         self._branch_episode_stats.zero_()
         if float(stats.sum().item()) <= 0.0:
-            return {}
+            return metrics
 
         episode_stats = stats.view(2, 2)
-        metrics: dict[str, float] = {}
         branch_names = ("nongrasp", "grasp")
         for branch_idx, branch_name in enumerate(branch_names):
             count = episode_stats[branch_idx, 0]
@@ -175,15 +361,30 @@ class CageAdversaryResetRuntimeHooks:
             metrics["BranchSuccess/overall_task_success_rate"] = float((total_task_success / total_count).item())
         return metrics
 
-    def format_iter_metrics(self, metrics: dict[str, float]) -> str | None:
-        if "BranchSuccess/overall_task_success_rate" not in metrics:
+    def consume_adversary_hdf5_records(self) -> dict | None:
+        records = getattr(self.env, POSE_DELTA_ACCEPTED_RECORDS_ATTR, None)
+        if not isinstance(records, list) or len(records) == 0:
             return None
-        return (
-            "BranchTaskSuccess: "
-            f"grasp_task_success_rate={metrics.get('BranchSuccess/grasp_task_success_rate', float('nan')):.4f} "
-            f"nongrasp_task_success_rate={metrics.get('BranchSuccess/nongrasp_task_success_rate', float('nan')):.4f} "
-            f"overall_task_success_rate={metrics.get('BranchSuccess/overall_task_success_rate', float('nan')):.4f}"
-        )
+        setattr(self.env, POSE_DELTA_ACCEPTED_RECORDS_ATTR, [])
+
+        datasets: dict[str, torch.Tensor] = {}
+        for key in ("accepted_reset_env_ids", "accepted_reset_states", "accepted_reset_deltas"):
+            values = [record[key] for record in records if isinstance(record.get(key), torch.Tensor)]
+            if values:
+                datasets[key] = torch.cat(values, dim=0).detach()
+        if "accepted_reset_states" not in datasets or datasets["accepted_reset_states"].numel() == 0:
+            return None
+
+        return {
+            "file_name": "accepted_reset_states.h5",
+            "datasets": datasets,
+            "attrs": {
+                "record_type": "accepted_reset_states",
+                "description": "Accepted reset-state records only; rejected adversary proposals are not written.",
+                "state_names": POSE_RESET_STATE_NAMES,
+                "delta_names": POSE_RESET_DELTA_NAMES,
+            },
+        }
 
 
 def adversary_rigid_body_material_from_action(
@@ -529,9 +730,7 @@ class adversary_reset_receptive_object_pose_from_action(ManagerTermBase):
         action_y_index: int = 1,
         action_yaw_index: int = 2,
     ) -> None:
-        raw_actions = _get_action_term_raw_actions(env, self.action_name)
-        env_ids_dev = env_ids.to(raw_actions.device)
-        a = raw_actions[env_ids_dev]
+        a = _get_pose_delta_candidate_actions(env, env_ids)
 
         # Clamp adversary outputs to pose ranges
         x = torch.clamp(a[:, self.action_x_index], self.pose_range[0, 0], self.pose_range[0, 1])
@@ -650,10 +849,8 @@ class adversary_reset_insertive_object_pose_from_assembled_offset(ManagerTermBas
         insertive_quat_w = base_quat_w.clone()
 
         if adversary_mask.any():
-            # Read adversary action values for the selected envs
-            raw_actions = _get_action_term_raw_actions(env, self.action_name)
-            env_ids_dev = env_ids.to(raw_actions.device)
-            a = raw_actions[env_ids_dev]
+            # Read prepared continuous reset actions for the selected envs.
+            a = _get_pose_delta_candidate_actions(env, env_ids)
             si = self.action_start_index
             offset_values = a[adversary_mask, si : si + 6]
 
@@ -890,8 +1087,7 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         action_name: str = "adversaryaction",
         action_start_index: int = 9,
     ) -> None:
-        raw_actions = _get_action_term_raw_actions(env, self.action_name)
-        a = raw_actions[env_ids.to(raw_actions.device)]
+        a = _get_pose_delta_candidate_actions(env, env_ids)
         num_envs = len(env_ids)
 
         grasped_mask = torch.zeros(num_envs, dtype=torch.bool, device=env.device)

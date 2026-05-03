@@ -10,8 +10,8 @@ from isaaclab.utils import configclass
 from .adversary_actions import AdversaryAction
 
 
-# Receptive root: x, y, yaw (0-2). Insertive offset: 6-D body frame (3-8).
-# EE pose relative to insertive object: x, y, z, roll, pitch, yaw (9-14).
+# Pose adversary delta command: receptive root x/y/yaw (0-2),
+# insertive relative pose delta (3-8), EE relative pose delta (9-14).
 ADVERSARY_POSE_ACTION_DIM = 15
 
 # Parameter adversary (AdversaryAdvancedEventCfg): friction, mass, joint/actuator/OSC gains (18 total).

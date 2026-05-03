@@ -229,6 +229,34 @@ class AdversaryBaseEventCfg:
 
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
 
+    prepare_pose_delta_action = EventTerm(
+        func=task_mdp.adversary_prepare_pose_delta_action,
+        mode="reset",
+        params={
+            "action_name": "adversaryaction",
+            "action_low": (
+                0.3, -0.1, -np.pi / 12,
+                -0.2, -0.2, 0.0, -np.pi, -np.pi, -np.pi,
+                -0.15, -0.15, -0.05, -np.pi / 4, -np.pi / 4, -np.pi / 4,
+            ),
+            "action_high": (
+                0.55, 0.3, np.pi / 12,
+                0.2, 0.2, 0.3, np.pi, np.pi, np.pi,
+                0.15, 0.15, 0.30, np.pi / 4, np.pi / 4, np.pi / 4,
+            ),
+            "neutral_action": (
+                0.425, 0.1, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+            "delta_scale": (
+                0.02, 0.02, np.pi / 36,
+                0.02, 0.02, 0.02, np.pi / 36, np.pi / 36, np.pi / 36,
+                0.01, 0.01, 0.01, np.pi / 36, np.pi / 36, np.pi / 36,
+            ),
+        },
+    )
+
     reset_receptive_object_pose = EventTerm(
         func=task_mdp.adversary_reset_receptive_object_pose_from_action,
         mode="reset",
