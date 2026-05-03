@@ -126,7 +126,6 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
 
     regret_k: int = 9
     beta_gen_reward: float = 1.0
-    adversary_kl_penalty_coef: float = 1.0
 
     inline_settling: dict = {
         "settle_max_steps": 20,               # 2.0s / 0.1s control-step
@@ -206,7 +205,6 @@ class AdversaryAdvancedRunner(RslRlBaseRunnerCfg):
 
     regret_k: int = 6
     beta_gen_reward: float = 1.0
-    adversary_kl_penalty_coef: float = 0.0
 
     inline_settling: dict = {
         "settle_max_steps": 20,
