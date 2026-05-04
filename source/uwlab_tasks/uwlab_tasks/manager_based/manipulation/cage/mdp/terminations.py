@@ -20,9 +20,13 @@ from ..assembly_keypoints import Offset
 from .collision_analyzer_cfg import CollisionAnalyzerCfg
 from .pose_delta_adversary import (
     POSE_DELTA_ACCEPTED_RECORDS_ATTR,
+    POSE_DELTA_BASE_ACTION_ATTR,
+    POSE_DELTA_BASE_VALID_ATTR,
     POSE_DELTA_CANDIDATE_ACTION_ATTR,
     POSE_DELTA_CANDIDATE_VALID_ATTR,
     POSE_DELTA_COMMITTED_ACTION_ATTR,
+    POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR,
+    POSE_DELTA_RESET_TYPE_ATTR,
     commit_pose_delta_candidate_tensors,
 )
 
@@ -241,8 +245,12 @@ class check_reset_state_success(ManagerTermBase):
         "_cage_reset_grasp_branch",
         "_cage_reset_branch_valid",
         POSE_DELTA_COMMITTED_ACTION_ATTR,
+        POSE_DELTA_BASE_ACTION_ATTR,
+        POSE_DELTA_BASE_VALID_ATTR,
         POSE_DELTA_CANDIDATE_ACTION_ATTR,
         POSE_DELTA_CANDIDATE_VALID_ATTR,
+        POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR,
+        POSE_DELTA_RESET_TYPE_ATTR,
     )
 
     def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedEnv):
@@ -379,13 +387,17 @@ class check_reset_state_success(ManagerTermBase):
             return
 
         committed = getattr(env, POSE_DELTA_COMMITTED_ACTION_ATTR, None)
+        base_action = getattr(env, POSE_DELTA_BASE_ACTION_ATTR, None)
         candidate = getattr(env, POSE_DELTA_CANDIDATE_ACTION_ATTR, None)
         candidate_valid = getattr(env, POSE_DELTA_CANDIDATE_VALID_ATTR, None)
+        last_physical_delta = getattr(env, POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR, None)
         if not (
             isinstance(committed, torch.Tensor)
+            and isinstance(base_action, torch.Tensor)
             and isinstance(candidate, torch.Tensor)
             and isinstance(candidate_valid, torch.Tensor)
             and committed.shape == candidate.shape
+            and base_action.shape == candidate.shape
             and committed.ndim == 2
             and candidate_valid.shape == (env.num_envs,)
         ):
@@ -396,8 +408,11 @@ class check_reset_state_success(ManagerTermBase):
         if accepted_ids.numel() > 0:
             target_ids = accepted_ids.to(committed.device)
             source_ids = accepted_ids.to(candidate.device)
-            previous = committed[target_ids].detach().clone()
             accepted = candidate[source_ids].to(device=committed.device, dtype=committed.dtype).detach().clone()
+            accepted_base = base_action[source_ids.to(base_action.device)].to(
+                device=committed.device, dtype=committed.dtype
+            )
+            accepted_delta = accepted - accepted_base
             records = getattr(env, POSE_DELTA_ACCEPTED_RECORDS_ATTR, None)
             if not isinstance(records, list):
                 records = []
@@ -406,10 +421,17 @@ class check_reset_state_success(ManagerTermBase):
                 {
                     "accepted_reset_env_ids": accepted_ids.detach().clone(),
                     "accepted_reset_states": accepted,
-                    "accepted_reset_deltas": accepted - previous,
+                    "accepted_reset_deltas": accepted_delta,
                 }
             )
-        commit_pose_delta_candidate_tensors(committed, candidate, candidate_valid, settling_success)
+        commit_pose_delta_candidate_tensors(
+            committed,
+            candidate,
+            candidate_valid,
+            settling_success,
+            last_physical_delta=last_physical_delta if isinstance(last_physical_delta, torch.Tensor) else None,
+            base_action=base_action,
+        )
 
     def _apply_grasp_survival_filter(
         self, env: ManagerBasedEnv, reset_success: torch.Tensor

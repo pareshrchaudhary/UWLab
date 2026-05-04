@@ -28,9 +28,18 @@ from uwlab_tasks.manager_based.manipulation.cage.mdp import utils
 from ..assembly_keypoints import Offset
 from .pose_delta_adversary import (
     POSE_DELTA_ACCEPTED_RECORDS_ATTR,
+    POSE_DELTA_BASE_ACTION_ATTR,
+    POSE_DELTA_BASE_VALID_ATTR,
     POSE_DELTA_CANDIDATE_ACTION_ATTR,
     POSE_DELTA_CANDIDATE_VALID_ATTR,
     POSE_DELTA_COMMITTED_ACTION_ATTR,
+    POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR,
+    POSE_DELTA_RESET_TYPE_ATTR,
+    POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_ANYWHERE,
+    POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_GRASPED,
+    POSE_RESET_TYPE_OBJECT_PARTIALLY_ASSEMBLED_EE_GRASPED,
+    POSE_RESET_TYPE_OBJECT_RESTING_EE_GRASPED,
+    POSE_RESET_TYPE_PROBS,
     POSE_RESET_DELTA_NAMES,
     POSE_RESET_STATE_NAMES,
     compute_pose_delta_candidate,
@@ -81,6 +90,21 @@ def _get_pose_delta_candidate_actions(env: ManagerBasedEnv, env_ids: torch.Tenso
     return candidate[target_ids].to(device=env.device, dtype=torch.float32)
 
 
+def _get_pose_delta_reset_types(env: ManagerBasedEnv, env_ids: torch.Tensor) -> torch.Tensor:
+    reset_types = getattr(env, POSE_DELTA_RESET_TYPE_ATTR, None)
+    if not isinstance(reset_types, torch.Tensor) or reset_types.shape != (env.num_envs,):
+        raise RuntimeError("CAGE pose reset expected internal reset-type metadata.")
+    return reset_types[env_ids.to(reset_types.device)].to(device=env.device, dtype=torch.long)
+
+
+def _quat_to_euler_action(quat: torch.Tensor) -> torch.Tensor:
+    roll, pitch, yaw = math_utils.euler_xyz_from_quat(quat)
+    return torch.stack(
+        [math_utils.wrap_to_pi(roll), math_utils.wrap_to_pi(pitch), math_utils.wrap_to_pi(yaw)],
+        dim=-1,
+    )
+
+
 class adversary_prepare_pose_delta_action(ManagerTermBase):
     """Prepare continuous reset actions from raw adversary delta commands."""
 
@@ -106,11 +130,32 @@ class adversary_prepare_pose_delta_action(ManagerTermBase):
             raise ValueError("action_low must be <= action_high for every CAGE pose adversary dimension.")
 
         self._committed_action = self.neutral_action.unsqueeze(0).repeat(env.num_envs, 1).clone()
+        self._base_action = self._committed_action.clone()
+        self._base_valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self._candidate_action = self._committed_action.clone()
         self._candidate_valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        self._last_physical_delta = torch.zeros_like(self._committed_action)
+        self._reset_type = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
         setattr(env, POSE_DELTA_COMMITTED_ACTION_ATTR, self._committed_action)
+        setattr(env, POSE_DELTA_BASE_ACTION_ATTR, self._base_action)
+        setattr(env, POSE_DELTA_BASE_VALID_ATTR, self._base_valid)
         setattr(env, POSE_DELTA_CANDIDATE_ACTION_ATTR, self._candidate_action)
         setattr(env, POSE_DELTA_CANDIDATE_VALID_ATTR, self._candidate_valid)
+        setattr(env, POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR, self._last_physical_delta)
+        setattr(env, POSE_DELTA_RESET_TYPE_ATTR, self._reset_type)
+        setattr(env, "_cage_adversary_pose_prepare_event", self)
+
+    def begin_semantic_base(self, env_ids: torch.Tensor) -> None:
+        target_ids = env_ids.to(self._base_action.device)
+        probs = torch.tensor(POSE_RESET_TYPE_PROBS, device=self._base_action.device, dtype=torch.float32)
+        sampled = torch.multinomial(probs, target_ids.numel(), replacement=True)
+        self._reset_type[target_ids] = sampled
+        self._base_action[target_ids] = self.neutral_action.to(self._base_action.device)
+        self._base_valid[target_ids] = False
+        self._candidate_valid[target_ids] = False
+
+    def finish_semantic_base(self, env_ids: torch.Tensor) -> None:
+        self._base_valid[env_ids.to(self._base_valid.device)] = True
 
     def __call__(
         self,
@@ -127,10 +172,13 @@ class adversary_prepare_pose_delta_action(ManagerTermBase):
         raw_delta = raw_actions[env_ids_dev, : self.action_dim].to(env.device, dtype=torch.float32)
 
         target_ids = env_ids.to(self._committed_action.device)
+        base = self._base_action[target_ids]
+        base_valid = self._base_valid[target_ids].to(device=base.device, dtype=torch.bool).unsqueeze(-1)
         committed = self._committed_action[target_ids]
+        candidate_base = torch.where(base_valid, base, committed)
         candidate = compute_pose_delta_candidate(
             raw_delta,
-            committed,
+            candidate_base,
             self.delta_scale,
             self.action_low,
             self.action_high,
@@ -149,8 +197,6 @@ class CageAdversaryResetRuntimeHooks:
     def __init__(self, env: ManagerBasedEnv, robot: Articulation):
         self.env = env
         self.robot = robot
-        self._settled_policy_observation = torch.zeros((env.num_envs, 36), dtype=torch.float32, device=env.device)
-        setattr(env, "_cage_adversary_settled_policy_observation", self._settled_policy_observation)
         self._live_anchor_grasp_branch = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         self._live_anchor_branch_valid = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         # Rows: non-grasp branch, grasp branch. Columns: done count, task-success count.
@@ -225,6 +271,35 @@ class CageAdversaryResetRuntimeHooks:
         reset(env_ids)
         return True
 
+    def prepare_adversary_proposal_context(self, env_ids: torch.Tensor) -> None:
+        """Stage a physical semantic base before the runner samples adversary deltas."""
+        if env_ids.numel() == 0:
+            return
+        target_ids = env_ids.to(self.env.device)
+        prepare_event = getattr(self.env, "_cage_adversary_pose_prepare_event", None)
+        receptive_event = getattr(self.env, "_cage_adversary_receptive_reset_event", None)
+        insertive_event = getattr(self.env, "_cage_adversary_insertive_reset_event", None)
+        ee_event = getattr(self.env, "_cage_adversary_ee_reset_event", None)
+        missing = [
+            name
+            for name, value in (
+                ("prepare_pose_delta_action", prepare_event),
+                ("reset_receptive_object_pose", receptive_event),
+                ("reset_insertive_object", insertive_event),
+                ("reset_end_effector_pose", ee_event),
+            )
+            if value is None
+        ]
+        if missing:
+            raise RuntimeError(f"CAGE adversary proposal staging missing events: {missing}")
+
+        prepare_event.begin_semantic_base(target_ids)
+        receptive_event.stage_semantic_base(self.env, target_ids)
+        insertive_event.stage_semantic_base(self.env, target_ids)
+        ee_event.stage_semantic_base(self.env, target_ids)
+        prepare_event.finish_semantic_base(target_ids)
+        self.env.scene.write_data_to_sim()
+
     def on_runner_state_written(self, env_ids: torch.Tensor) -> None:
         """Refresh IsaacLab managers after the runner restores a cached scene state."""
         if env_ids.numel() == 0:
@@ -246,20 +321,6 @@ class CageAdversaryResetRuntimeHooks:
 
         termination_manager = getattr(self.env, "termination_manager", None)
         self._reset_manager(termination_manager, target_ids)
-
-    def capture_settled_policy_observation(self, obs, env_ids: torch.Tensor) -> None:
-        if env_ids.numel() == 0:
-            return
-        critic_obs = obs["critic"].detach().to(self._settled_policy_observation.device)
-        if critic_obs.shape[-1] < 43:
-            raise RuntimeError(f"Critic observation has dim {critic_obs.shape[-1]}, expected at least 43.")
-        # Critic prefix layout: insertive-in-receptive(6), prev_actions(7),
-        # joint_pos(12), ee_pose(6), insertive_pose(6), receptive_pose(6).
-        # The reset adversary should condition on state hardness, not the
-        # protagonist's previous action, so drop the 7D prev_actions block.
-        settled_context = torch.cat((critic_obs[:, 0:6], critic_obs[:, 13:43]), dim=-1)
-        target_ids = env_ids.to(self._settled_policy_observation.device)
-        self._settled_policy_observation[target_ids] = settled_context[target_ids]
 
     def settling_gripper_targets(self, _default_action: float) -> torch.Tensor:
         target = self._tensor_attr("_cage_adversary_gripper_action_target", (self.env.num_envs,))
@@ -705,6 +766,7 @@ class adversary_reset_receptive_object_pose_from_action(ManagerTermBase):
         self.action_x_index: int = cfg.params.get("action_x_index", 0)
         self.action_y_index: int = cfg.params.get("action_y_index", 1)
         self.action_yaw_index: int = cfg.params.get("action_yaw_index", 2)
+        setattr(env, "_cage_adversary_receptive_reset_event", self)
 
         if self.use_bottom_offset:
             self.bottom_offset_positions = dict()
@@ -717,27 +779,25 @@ class adversary_reset_receptive_object_pose_from_action(ManagerTermBase):
                     torch.tensor(bottom_offset.get("pos"), device=env.device).unsqueeze(0).repeat(env.num_envs, 1)
                 )
 
-    def __call__(
-        self,
-        env: ManagerBasedEnv,
-        env_ids: torch.Tensor,
-        pose_range: dict[str, tuple[float, float]],
-        asset_cfgs: dict[str, SceneEntityCfg] = dict(),
-        offset_asset_cfg: SceneEntityCfg = None,
-        use_bottom_offset: bool = False,
-        action_name: str = "adversaryaction",
-        action_x_index: int = 0,
-        action_y_index: int = 1,
-        action_yaw_index: int = 2,
-    ) -> None:
-        a = _get_pose_delta_candidate_actions(env, env_ids)
+    def _sample_receptive_action(self, env_ids: torch.Tensor) -> torch.Tensor:
+        num_envs = env_ids.numel()
+        values = torch.zeros((num_envs, 3), device=env_ids.device, dtype=torch.float32)
+        values[:, 0] = math_utils.sample_uniform(
+            self.pose_range[0, 0], self.pose_range[0, 1], (num_envs,), device=env_ids.device
+        )
+        values[:, 1] = math_utils.sample_uniform(
+            self.pose_range[1, 0], self.pose_range[1, 1], (num_envs,), device=env_ids.device
+        )
+        values[:, 2] = math_utils.sample_uniform(
+            self.pose_range[5, 0], self.pose_range[5, 1], (num_envs,), device=env_ids.device
+        )
+        return values
 
-        # Clamp adversary outputs to pose ranges
-        x = torch.clamp(a[:, self.action_x_index], self.pose_range[0, 0], self.pose_range[0, 1])
-        y = torch.clamp(a[:, self.action_y_index], self.pose_range[1, 0], self.pose_range[1, 1])
-        yaw = torch.clamp(a[:, self.action_yaw_index], self.pose_range[5, 0], self.pose_range[5, 1])
+    def _write_receptive_from_action(self, env: ManagerBasedEnv, env_ids: torch.Tensor, action_values: torch.Tensor) -> None:
+        x = torch.clamp(action_values[:, self.action_x_index], self.pose_range[0, 0], self.pose_range[0, 1])
+        y = torch.clamp(action_values[:, self.action_y_index], self.pose_range[1, 0], self.pose_range[1, 1])
+        yaw = torch.clamp(action_values[:, self.action_yaw_index], self.pose_range[5, 0], self.pose_range[5, 1])
 
-        # Fixed pose components
         z = torch.full_like(x, (self.pose_range[2, 0] + self.pose_range[2, 1]) * 0.5)
         roll = torch.full_like(x, (self.pose_range[3, 0] + self.pose_range[3, 1]) * 0.5)
         pitch = torch.full_like(x, (self.pose_range[4, 0] + self.pose_range[4, 1]) * 0.5)
@@ -766,14 +826,38 @@ class adversary_reset_receptive_object_pose_from_action(ManagerTermBase):
             asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
             asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
 
+    def stage_semantic_base(self, env: ManagerBasedEnv, env_ids: torch.Tensor) -> None:
+        base = getattr(env, POSE_DELTA_BASE_ACTION_ATTR)
+        target_ids = env_ids.to(base.device)
+        receptive_action = self._sample_receptive_action(target_ids)
+        base[target_ids, self.action_x_index] = receptive_action[:, 0].to(base.device)
+        base[target_ids, self.action_y_index] = receptive_action[:, 1].to(base.device)
+        base[target_ids, self.action_yaw_index] = receptive_action[:, 2].to(base.device)
+        self._write_receptive_from_action(env, env_ids, base[target_ids].to(env.device))
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        pose_range: dict[str, tuple[float, float]],
+        asset_cfgs: dict[str, SceneEntityCfg] = dict(),
+        offset_asset_cfg: SceneEntityCfg = None,
+        use_bottom_offset: bool = False,
+        action_name: str = "adversaryaction",
+        action_x_index: int = 0,
+        action_y_index: int = 1,
+        action_yaw_index: int = 2,
+    ) -> None:
+        a = _get_pose_delta_candidate_actions(env, env_ids)
+        self._write_receptive_from_action(env, env_ids, a)
+
 
 class adversary_reset_insertive_object_pose_from_assembled_offset(ManagerTermBase):
-    """Reset insertive object pose using partial assembly dataset as base + adversary offsets.
+    """Reset insertive object pose from staged semantic bases plus adversary offsets.
 
-    Samples a partial assembly state from a pre-recorded dataset (relative pose of the
-    insertive w.r.t. the receptive object), then applies adversary action values as
-    body-frame offsets on top.  Zero offsets → partial assembly state from dataset;
-    large offsets → displaced (e.g. on table).
+    Partially assembled semantics use the existing partial-assembly dataset as a
+    base. Other semantics generate legal relative poses procedurally. The final
+    reset uses the staged base plus the adversary's continuous delta.
     """
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
@@ -814,6 +898,80 @@ class adversary_reset_insertive_object_pose_from_assembled_offset(ManagerTermBas
 
         self.action_name: str = cfg.params["action_name"]
         self.action_start_index: int = cfg.params.get("action_start_index", 3)
+        setattr(env, "_cage_adversary_insertive_reset_event", self)
+
+    def _sample_anywhere_relative_pose(self, num_envs: int, device: torch.device) -> torch.Tensor:
+        return math_utils.sample_uniform(self.ranges[:, 0], self.ranges[:, 1], (num_envs, 6), device=device)
+
+    def _sample_resting_relative_pose(self, num_envs: int, device: torch.device) -> torch.Tensor:
+        samples = self._sample_anywhere_relative_pose(num_envs, device)
+        samples[:, 2] = self.ranges[2, 0]
+        samples[:, 3] = 0.0
+        samples[:, 4] = 0.0
+        samples[:, 5] = math_utils.sample_uniform(self.ranges[5, 0], self.ranges[5, 1], (num_envs,), device=device)
+        return samples
+
+    def _sample_partial_assembly_relative_pose(self, num_envs: int, device: torch.device) -> torch.Tensor:
+        assembly_indices = torch.randint(0, len(self.rel_positions), (num_envs,), device=device)
+        rel_pos = self.rel_positions[assembly_indices].to(device)
+        rel_euler = _quat_to_euler_action(self.rel_quaternions[assembly_indices].to(device))
+        return torch.clamp(torch.cat([rel_pos, rel_euler], dim=-1), self.ranges[:, 0], self.ranges[:, 1])
+
+    def stage_semantic_base(self, env: ManagerBasedEnv, env_ids: torch.Tensor) -> None:
+        base = getattr(env, POSE_DELTA_BASE_ACTION_ATTR)
+        reset_types = _get_pose_delta_reset_types(env, env_ids)
+        target_ids = env_ids.to(base.device)
+        base_values = torch.zeros((env_ids.numel(), 6), device=env.device, dtype=torch.float32)
+
+        anywhere_mask = (reset_types == POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_ANYWHERE) | (
+            reset_types == POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_GRASPED
+        )
+        if bool(anywhere_mask.any().item()):
+            base_values[anywhere_mask] = self._sample_anywhere_relative_pose(
+                int(anywhere_mask.sum().item()), env.device
+            )
+
+        resting_mask = reset_types == POSE_RESET_TYPE_OBJECT_RESTING_EE_GRASPED
+        if bool(resting_mask.any().item()):
+            base_values[resting_mask] = self._sample_resting_relative_pose(
+                int(resting_mask.sum().item()), env.device
+            )
+
+        partial_mask = reset_types == POSE_RESET_TYPE_OBJECT_PARTIALLY_ASSEMBLED_EE_GRASPED
+        if bool(partial_mask.any().item()):
+            base_values[partial_mask] = self._sample_partial_assembly_relative_pose(
+                int(partial_mask.sum().item()), env.device
+            )
+
+        si = self.action_start_index
+        base[target_ids, si : si + 6] = base_values.to(base.device)
+        self._write_insertive_from_action(env, env_ids, base[target_ids].to(env.device))
+
+    def _write_insertive_from_action(
+        self, env: ManagerBasedEnv, env_ids: torch.Tensor, action_values: torch.Tensor
+    ) -> None:
+        receptive_pos_w = self.receptive_object.data.root_pos_w[env_ids]
+        receptive_quat_w = self.receptive_object.data.root_quat_w[env_ids]
+
+        si = self.action_start_index
+        clamped = torch.clamp(action_values[:, si : si + 6], self.ranges[:, 0], self.ranges[:, 1])
+        rel_pos = clamped[:, 0:3]
+        rel_quat = math_utils.quat_from_euler_xyz(clamped[:, 3], clamped[:, 4], clamped[:, 5])
+        insertive_pos_w, insertive_quat_w = math_utils.combine_frame_transforms(
+            receptive_pos_w, receptive_quat_w, rel_pos, rel_quat
+        )
+
+        self.insertive_object.write_root_state_to_sim(
+            root_state=torch.cat(
+                [
+                    insertive_pos_w,
+                    insertive_quat_w,
+                    torch.zeros((env_ids.numel(), 6), device=env.device),
+                ],
+                dim=-1,
+            ),
+            env_ids=env_ids,
+        )
 
     def __call__(
         self,
@@ -826,70 +984,17 @@ class adversary_reset_insertive_object_pose_from_assembled_offset(ManagerTermBas
         action_name: str = "adversaryaction",
         action_start_index: int = 3,
     ) -> None:
-        num_envs = len(env_ids)
-
-        # 1. Get receptive object's current world pose (already reset by adversary)
-        receptive_pos_w = self.receptive_object.data.root_pos_w[env_ids]
-        receptive_quat_w = self.receptive_object.data.root_quat_w[env_ids]
-
-        # 2. Sample partial assembly states from dataset
-        assembly_indices = torch.randint(0, len(self.rel_positions), (num_envs,), device=env.device)
-        sampled_rel_pos = self.rel_positions[assembly_indices]
-        sampled_rel_quat = self.rel_quaternions[assembly_indices]
-
-        # Transform to world coordinates: T_insertive_w = T_receptive_w * T_relative
-        base_pos_w, base_quat_w = math_utils.combine_frame_transforms(
-            receptive_pos_w, receptive_quat_w, sampled_rel_pos, sampled_rel_quat
-        )
-
-        # 3. Split envs: 50% get adversary offsets, 50% keep raw dataset samples
-        adversary_mask = torch.rand(num_envs, device=env.device) < 0.5
-
-        insertive_pos_w = base_pos_w.clone()
-        insertive_quat_w = base_quat_w.clone()
-
-        if adversary_mask.any():
-            # Read prepared continuous reset actions for the selected envs.
-            a = _get_pose_delta_candidate_actions(env, env_ids)
-            si = self.action_start_index
-            offset_values = a[adversary_mask, si : si + 6]
-
-            # Clamp to pose_range_b
-            clamped = torch.clamp(offset_values, self.ranges[:, 0], self.ranges[:, 1])
-
-            # Apply adversary offsets in body frame
-            offset_positions = clamped[:, 0:3]
-            offset_orientations = math_utils.quat_from_euler_xyz(clamped[:, 3], clamped[:, 4], clamped[:, 5])
-
-            adv_pos_w, adv_quat_w = math_utils.combine_frame_transforms(
-                base_pos_w[adversary_mask], base_quat_w[adversary_mask], offset_positions, offset_orientations
-            )
-
-            insertive_pos_w[adversary_mask] = adv_pos_w
-            insertive_quat_w[adversary_mask] = adv_quat_w
-
-        # 6. Write insertive root state to sim
-        self.insertive_object.write_root_state_to_sim(
-            root_state=torch.cat(
-                [
-                    insertive_pos_w,
-                    insertive_quat_w,
-                    torch.zeros((num_envs, 6), device=env.device),
-                ],
-                dim=-1,
-            ),
-            env_ids=env_ids,
-        )
+        a = _get_pose_delta_candidate_actions(env, env_ids)
+        self._write_insertive_from_action(env, env_ids, a)
 
 
 class adversary_reset_end_effector_from_action(ManagerTermBase):
-    """Reset end-effector pose and gripper state from a 50/50 grasp/action mix.
+    """Reset end-effector pose and gripper from staged semantic bases plus adversary deltas.
 
-    Half of the reset envs use a saved OmniReset grasp for the insertive object;
-    the other half place the EE at an adversary-chosen offset *relative to the
-    insertive object* (body frame), so the adversary directly controls approach
-    distance and angle rather than absolute workspace coordinates.
-    Downstream physics settling validates both branches.
+    CAGE samples OmniReset-style reset semantics before adversary action sampling.
+    Grasped semantics use a saved OmniReset grasp as the local base; non-grasp
+    semantics use an adversary-perturbed EE offset relative to the insertive object.
+    Downstream physics settling validates the final candidate.
     """
 
     def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
@@ -960,6 +1065,7 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         self._grasp_survival_reference_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
         self._reset_grasp_branch = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
         self._reset_branch_valid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        self._reset_grasp_index = torch.full((env.num_envs,), -1, device=env.device, dtype=torch.long)
         setattr(env, "_cage_adversary_gripper_action_target", self._settling_gripper_target)
         setattr(env, "_cage_adversary_settling_robot_joint_pos_target", self._settling_robot_joint_pos_target)
         setattr(env, "_cage_adversary_settling_robot_joint_vel_target", self._settling_robot_joint_vel_target)
@@ -969,6 +1075,7 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         setattr(env, "_cage_grasp_survival_reference_valid", self._grasp_survival_reference_valid)
         setattr(env, "_cage_reset_grasp_branch", self._reset_grasp_branch)
         setattr(env, "_cage_reset_branch_valid", self._reset_branch_valid)
+        setattr(env, "_cage_adversary_ee_reset_event", self)
 
     def _compute_grasp_dataset_path(self) -> str:
         usd_path = self.grasped_asset.cfg.spawn.usd_path
@@ -1074,6 +1181,118 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         self._reset_grasp_branch[env_ids] = grasped_mask.to(self._reset_grasp_branch.device, dtype=torch.bool)
         self._reset_branch_valid[env_ids] = True
 
+    def _sample_anywhere_ee_pose(self, num_envs: int, device: torch.device) -> torch.Tensor:
+        return math_utils.sample_uniform(self.ranges[:, 0], self.ranges[:, 1], (num_envs, 6), device=device)
+
+    def _sample_grasp_ee_pose(self, env_ids: torch.Tensor) -> torch.Tensor:
+        grasp_indices = torch.randint(0, len(self.rel_positions), (env_ids.numel(),), device=env_ids.device)
+        self._reset_grasp_index[env_ids.to(self._reset_grasp_index.device)] = grasp_indices.to(
+            self._reset_grasp_index.device
+        )
+        rel_pos = self.rel_positions[grasp_indices].to(env_ids.device)
+        rel_euler = _quat_to_euler_action(self.rel_quaternions[grasp_indices].to(env_ids.device))
+        return torch.clamp(torch.cat([rel_pos, rel_euler], dim=-1), self.ranges[:, 0], self.ranges[:, 1])
+
+    def stage_semantic_base(self, env: ManagerBasedEnv, env_ids: torch.Tensor) -> None:
+        base = getattr(env, POSE_DELTA_BASE_ACTION_ATTR)
+        reset_types = _get_pose_delta_reset_types(env, env_ids)
+        target_ids = env_ids.to(base.device)
+        base_values = torch.zeros((env_ids.numel(), 6), device=env.device, dtype=torch.float32)
+
+        nongrasp_mask = reset_types == POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_ANYWHERE
+        if bool(nongrasp_mask.any().item()):
+            base_values[nongrasp_mask] = self._sample_anywhere_ee_pose(int(nongrasp_mask.sum().item()), env.device)
+
+        grasped_mask = ~nongrasp_mask
+        if bool(grasped_mask.any().item()):
+            grasp_ids = env_ids[grasped_mask]
+            base_values[grasped_mask] = self._sample_grasp_ee_pose(grasp_ids.to(env.device))
+
+        si = self.action_start_index
+        base[target_ids, si : si + 6] = base_values.to(base.device)
+        self._write_ee_from_action(env, env_ids, base[target_ids].to(env.device), reset_types)
+
+    def _write_ee_from_action(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        action_values: torch.Tensor,
+        reset_types: torch.Tensor,
+    ) -> None:
+        num_envs = env_ids.numel()
+        si = self.action_start_index
+        clamped = torch.clamp(action_values[:, si : si + 6], self.ranges[:, 0], self.ranges[:, 1])
+        rel_quat = math_utils.quat_from_euler_xyz(clamped[:, 3], clamped[:, 4], clamped[:, 5])
+        ee_pos_w, ee_quat_w = math_utils.combine_frame_transforms(
+            self.grasped_asset.data.root_pos_w[env_ids],
+            self.grasped_asset.data.root_quat_w[env_ids],
+            clamped[:, 0:3],
+            rel_quat,
+        )
+
+        pos_b, quat_b = self.solver._compute_frame_pose()
+        pos_b[env_ids], quat_b[env_ids] = math_utils.subtract_frame_transforms(
+            self.robot.data.root_link_pos_w[env_ids],
+            self.robot.data.root_link_quat_w[env_ids],
+            ee_pos_w,
+            ee_quat_w,
+        )
+
+        self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
+
+        for _ in range(25):
+            self.solver.apply_actions()
+            delta_joint_pos = 0.25 * (self.robot.data.joint_pos_target[env_ids] - self.robot.data.joint_pos[env_ids])
+            self.robot.write_joint_state_to_sim(
+                position=(delta_joint_pos + self.robot.data.joint_pos[env_ids])[:, self.joint_ids],
+                velocity=torch.zeros((num_envs, self.n_joints), device=env.device),
+                joint_ids=self.joint_ids,
+                env_ids=env_ids,
+            )
+
+        grasped_mask = reset_types != POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_ANYWHERE
+        self._store_reset_branch_labels(env_ids, grasped_mask)
+        self._clear_grasp_survival_reference(env_ids)
+
+        num_gripper_joints = self.gripper_joint_positions.shape[1]
+        gripper_positions = self.gripper_open_positions.unsqueeze(0).expand(num_envs, -1).clone()
+        gripper_action_targets = torch.ones(num_envs, device=env.device, dtype=torch.float32)
+
+        if bool(grasped_mask.any().item()):
+            grasp_local = grasped_mask.nonzero(as_tuple=False).squeeze(-1)
+            grasp_ids = env_ids[grasp_local]
+            grasp_indices = self._reset_grasp_index[grasp_ids.to(self._reset_grasp_index.device)].to(env.device)
+            valid_grasp = grasp_indices >= 0
+            if not bool(valid_grasp.all().item()):
+                bad = grasp_ids[~valid_grasp][:10].detach().cpu().tolist()
+                raise RuntimeError(f"CAGE staged grasp reset missing grasp indices for envs: {bad}")
+            gripper_positions[grasp_local] = self.gripper_joint_positions[grasp_indices]
+            gripper_action_targets[grasp_local] = -1.0
+
+            expected_obj_pos_ee, expected_obj_quat_ee = math_utils.subtract_frame_transforms(
+                ee_pos_w[grasp_local],
+                ee_quat_w[grasp_local],
+                self.grasped_asset.data.root_pos_w[grasp_ids],
+                self.grasped_asset.data.root_quat_w[grasp_ids],
+            )
+            self._store_grasp_survival_reference(grasp_ids, expected_obj_pos_ee, expected_obj_quat_ee)
+
+        self.robot.write_joint_state_to_sim(
+            position=gripper_positions,
+            velocity=torch.zeros_like(gripper_positions),
+            joint_ids=self.gripper_joint_ids,
+            env_ids=env_ids,
+        )
+
+        full_joint_pos = self.robot.data.joint_pos[env_ids].clone()
+        full_joint_pos[:, self.gripper_joint_list] = gripper_positions
+        full_joint_vel = torch.zeros_like(full_joint_pos)
+        self.robot.set_joint_position_target(full_joint_pos, env_ids=env_ids)
+        self.robot.set_joint_velocity_target(full_joint_vel, env_ids=env_ids)
+
+        self._store_settling_gripper_targets(env_ids, gripper_action_targets)
+        self._store_settling_robot_joint_targets(env_ids, full_joint_pos, full_joint_vel)
+
     def __call__(
         self,
         env: ManagerBasedEnv,
@@ -1088,108 +1307,6 @@ class adversary_reset_end_effector_from_action(ManagerTermBase):
         action_start_index: int = 9,
     ) -> None:
         a = _get_pose_delta_candidate_actions(env, env_ids)
-        num_envs = len(env_ids)
-
-        grasped_mask = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
-        grasped_mask[torch.randperm(num_envs, device=env.device)[: num_envs // 2]] = True
-        adv_local = (~grasped_mask).nonzero(as_tuple=False).squeeze(-1)
-        grasp_local = grasped_mask.nonzero(as_tuple=False).squeeze(-1)
-        adv_ids = env_ids[adv_local]
-        grasp_ids = env_ids[grasp_local]
-        self._store_reset_branch_labels(env_ids, grasped_mask)
-        self._clear_grasp_survival_reference(env_ids)
-
-        pos_b, quat_b = self.solver._compute_frame_pose()
-
-        if adv_ids.numel() > 0:
-            si = self.action_start_index
-            adv_clamped = torch.clamp(a[adv_local, si : si + 6], self.ranges[:, 0], self.ranges[:, 1])
-            adv_rel_quat = math_utils.quat_from_euler_xyz(adv_clamped[:, 3], adv_clamped[:, 4], adv_clamped[:, 5])
-            adv_pos_w, adv_quat_w = math_utils.combine_frame_transforms(
-                self.grasped_asset.data.root_pos_w[adv_ids],
-                self.grasped_asset.data.root_quat_w[adv_ids],
-                adv_clamped[:, 0:3],
-                adv_rel_quat,
-            )
-            pos_b[adv_ids], quat_b[adv_ids] = math_utils.subtract_frame_transforms(
-                self.robot.data.root_link_pos_w[adv_ids],
-                self.robot.data.root_link_quat_w[adv_ids],
-                adv_pos_w,
-                adv_quat_w,
-            )
-
-        grasp_indices = None
-        if grasp_ids.numel() > 0:
-            grasp_indices = torch.randint(0, len(self.rel_positions), (grasp_ids.numel(),), device=env.device)
-            grasp_pos_w, grasp_quat_w = math_utils.combine_frame_transforms(
-                self.grasped_asset.data.root_pos_w[grasp_ids],
-                self.grasped_asset.data.root_quat_w[grasp_ids],
-                self.rel_positions[grasp_indices],
-                self.rel_quaternions[grasp_indices],
-            )
-            expected_obj_pos_ee, expected_obj_quat_ee = math_utils.subtract_frame_transforms(
-                grasp_pos_w,
-                grasp_quat_w,
-                self.grasped_asset.data.root_pos_w[grasp_ids],
-                self.grasped_asset.data.root_quat_w[grasp_ids],
-            )
-            pos_b[grasp_ids], quat_b[grasp_ids] = math_utils.subtract_frame_transforms(
-                self.robot.data.root_link_pos_w[grasp_ids],
-                self.robot.data.root_link_quat_w[grasp_ids],
-                grasp_pos_w,
-                grasp_quat_w,
-            )
-
-        self.solver.process_actions(torch.cat([pos_b, quat_b], dim=1))
-
-        # Match the grasp-dataset reset's convergence target.
-        for _ in range(25):
-            self.solver.apply_actions()
-            delta_joint_pos = 0.25 * (self.robot.data.joint_pos_target[env_ids] - self.robot.data.joint_pos[env_ids])
-            self.robot.write_joint_state_to_sim(
-                position=(delta_joint_pos + self.robot.data.joint_pos[env_ids])[:, self.joint_ids],
-                velocity=torch.zeros((num_envs, self.n_joints), device=env.device),
-                joint_ids=self.joint_ids,
-                env_ids=env_ids,
-            )
-
-        num_gripper_joints = self.gripper_joint_positions.shape[1]
-        gripper_positions = torch.zeros((num_envs, num_gripper_joints), device=env.device)
-        gripper_action_targets = -torch.ones(num_envs, device=env.device, dtype=torch.float32)
-
-        if adv_local.numel() > 0:
-            adv_gripper_targets = torch.where(
-                torch.rand(adv_local.numel(), device=env.device) < 0.5,
-                torch.ones(adv_local.numel(), device=env.device, dtype=torch.float32),
-                -torch.ones(adv_local.numel(), device=env.device, dtype=torch.float32),
-            )
-            gripper_action_targets[adv_local] = adv_gripper_targets
-            open_positions = self.gripper_open_positions.unsqueeze(0).expand(adv_local.numel(), -1)
-            closed_positions = self.gripper_closed_positions.unsqueeze(0).expand(adv_local.numel(), -1)
-            gripper_positions[adv_local] = torch.where(
-                (adv_gripper_targets > 0.0).unsqueeze(-1),
-                open_positions,
-                closed_positions,
-            )
-
-        if grasp_local.numel() > 0:
-            gripper_positions[grasp_local] = self.gripper_joint_positions[grasp_indices]
-
-        self.robot.write_joint_state_to_sim(
-            position=gripper_positions,
-            velocity=torch.zeros_like(gripper_positions),
-            joint_ids=self.gripper_joint_ids,
-            env_ids=env_ids,
-        )
-
-        full_joint_pos = self.robot.data.joint_pos[env_ids].clone()
-        full_joint_pos[:, self.gripper_joint_list] = gripper_positions
-        full_joint_vel = torch.zeros_like(full_joint_pos)
-        self.robot.set_joint_position_target(full_joint_pos, env_ids=env_ids)
-        self.robot.set_joint_velocity_target(full_joint_vel, env_ids=env_ids)
+        reset_types = _get_pose_delta_reset_types(env, env_ids)
+        self._write_ee_from_action(env, env_ids, a, reset_types)
         env.scene.write_data_to_sim()
-
-        self._store_settling_gripper_targets(env_ids, gripper_action_targets)
-        self._store_settling_robot_joint_targets(env_ids, full_joint_pos, full_joint_vel)
-        if grasp_ids.numel() > 0:
-            self._store_grasp_survival_reference(grasp_ids, expected_obj_pos_ee, expected_obj_quat_ee)

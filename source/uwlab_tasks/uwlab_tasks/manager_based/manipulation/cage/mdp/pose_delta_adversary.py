@@ -6,9 +6,19 @@ import torch
 
 
 POSE_DELTA_COMMITTED_ACTION_ATTR = "_cage_adversary_pose_committed_action"
+POSE_DELTA_BASE_ACTION_ATTR = "_cage_adversary_pose_base_action"
+POSE_DELTA_BASE_VALID_ATTR = "_cage_adversary_pose_base_valid"
 POSE_DELTA_CANDIDATE_ACTION_ATTR = "_cage_adversary_pose_candidate_action"
 POSE_DELTA_CANDIDATE_VALID_ATTR = "_cage_adversary_pose_candidate_valid"
+POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR = "_cage_adversary_pose_last_physical_delta"
 POSE_DELTA_ACCEPTED_RECORDS_ATTR = "_cage_adversary_pose_accepted_records"
+POSE_DELTA_RESET_TYPE_ATTR = "_cage_adversary_pose_reset_type"
+
+POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_ANYWHERE = 0
+POSE_RESET_TYPE_OBJECT_RESTING_EE_GRASPED = 1
+POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_GRASPED = 2
+POSE_RESET_TYPE_OBJECT_PARTIALLY_ASSEMBLED_EE_GRASPED = 3
+POSE_RESET_TYPE_PROBS = (0.25, 0.25, 0.25, 0.25)
 
 POSE_RESET_STATE_NAMES = (
     "receptive_object_x",
@@ -49,6 +59,8 @@ def commit_pose_delta_candidate_tensors(
     candidate: torch.Tensor,
     candidate_valid: torch.Tensor,
     commit_mask: torch.Tensor,
+    last_physical_delta: torch.Tensor | None = None,
+    base_action: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Commit prepared pose adversary candidates for successful settling envs."""
 
@@ -58,5 +70,15 @@ def commit_pose_delta_candidate_tensors(
     if commit_ids.numel() > 0:
         target_ids = commit_ids.to(committed.device)
         source_ids = commit_ids.to(candidate.device)
-        committed[target_ids] = candidate[source_ids].to(device=committed.device, dtype=committed.dtype)
+        accepted = candidate[source_ids].to(device=committed.device, dtype=committed.dtype)
+        if base_action is not None:
+            base = base_action[source_ids.to(base_action.device)].to(device=committed.device, dtype=committed.dtype)
+        else:
+            base = committed[target_ids]
+        accepted_delta = accepted - base
+        committed[target_ids] = accepted
+        if last_physical_delta is not None:
+            last_physical_delta[target_ids] = accepted_delta.to(
+                device=last_physical_delta.device, dtype=last_physical_delta.dtype
+            )
     return commit_ids

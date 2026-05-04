@@ -17,6 +17,10 @@ from uwlab_tasks.manager_based.manipulation.cage.mdp.actions.adversary_actions_c
     ADVERSARY_POSE_ACTION_DIM,
 )
 from uwlab_tasks.manager_based.manipulation.cage.mdp import utils
+from uwlab_tasks.manager_based.manipulation.cage.mdp.pose_delta_adversary import (
+    POSE_DELTA_COMMITTED_ACTION_ATTR,
+    POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR,
+)
 
 
 def target_asset_pose_in_root_asset_frame(
@@ -317,17 +321,32 @@ def policy_last_action(env: ManagerBasedRLEnv, adversary_action_dim: int = ADVER
     return full_actions[:, :policy_action_dim]
 
 
-def adversary_settled_policy_observation(
+def _adversary_pose_tensor(
     env: ManagerBasedEnv,
-    dim: int,
-    attr_name: str = "_cage_adversary_settled_policy_observation",
+    attr_name: str,
+    dim: int = ADVERSARY_POSE_ACTION_DIM,
 ) -> torch.Tensor:
-    """Reset-state context captured after the previous valid settling window."""
     source_env = getattr(env, "unwrapped", env)
-    settled_observation = getattr(source_env, attr_name, None)
-    if settled_observation is None:
+    value = getattr(source_env, attr_name, None)
+    if not isinstance(value, torch.Tensor) or value.ndim != 2:
         return torch.zeros((env.num_envs, dim), device=env.device, dtype=torch.float)
-    return settled_observation[:, :dim].to(device=env.device, dtype=torch.float)
+    return value[:, :dim].to(device=env.device, dtype=torch.float)
+
+
+def adversary_committed_reset_state(
+    env: ManagerBasedEnv,
+    dim: int = ADVERSARY_POSE_ACTION_DIM,
+) -> torch.Tensor:
+    """Current committed reset vector in the same 15D space the adversary controls."""
+    return _adversary_pose_tensor(env, POSE_DELTA_COMMITTED_ACTION_ATTR, dim)
+
+
+def adversary_previous_physical_delta(
+    env: ManagerBasedEnv,
+    dim: int = ADVERSARY_POSE_ACTION_DIM,
+) -> torch.Tensor:
+    """Last accepted adversary delta after tanh, physical scaling, and legal-range clamping."""
+    return _adversary_pose_tensor(env, POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR, dim)
 
 
 def adversary_previous_action(
