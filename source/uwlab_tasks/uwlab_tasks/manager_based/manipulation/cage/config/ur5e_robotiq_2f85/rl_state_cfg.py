@@ -227,102 +227,74 @@ class AdversaryBaseEventCfg:
         },
     )
 
+    load_family_bootstrap_states = EventTerm(
+        func=task_mdp.cage_load_omnireset_family_bootstrap_states,
+        mode="startup",
+        params={
+            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
+            "reset_types": task_mdp.POSE_RESET_FAMILY_NAMES,
+            "debug_print": False,
+            "filter_saved_velocities": True,
+            "max_robot_joint_velocity_sum": 0.2,
+            "max_object_root_velocity_sum": 0.1,
+        },
+    )
+
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
 
-    prepare_pose_delta_action = EventTerm(
-        func=task_mdp.adversary_prepare_pose_delta_action,
+    replay_family_lane_states = EventTerm(
+        func=task_mdp.cage_replay_family_lane_perturbation_states,
         mode="reset",
         params={
-            "action_name": "adversaryaction",
-            "action_low": (
-                0.3, -0.1, -np.pi / 12,
-                -0.2, -0.2, 0.0, -np.pi, -np.pi, -np.pi,
-                -0.15, -0.15, -0.05, -np.pi / 4, -np.pi / 4, -np.pi / 4,
-            ),
-            "action_high": (
-                0.55, 0.3, np.pi / 12,
-                0.2, 0.2, 0.3, np.pi, np.pi, np.pi,
-                0.15, 0.15, 0.30, np.pi / 4, np.pi / 4, np.pi / 4,
-            ),
-            "neutral_action": (
-                0.425, 0.1, 0.0,
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            ),
-            "delta_scale": (
-                0.02, 0.02, np.pi / 36,
-                0.02, 0.02, 0.02, np.pi / 36, np.pi / 36, np.pi / 36,
-                0.01, 0.01, 0.01, np.pi / 36, np.pi / 36, np.pi / 36,
-            ),
-        },
-    )
-
-    reset_receptive_object_pose = EventTerm(
-        func=task_mdp.adversary_reset_receptive_object_pose_from_action,
-        mode="reset",
-        params={
-            "pose_range": {
-                "x": (0.3, 0.55),
-                "y": (-0.1, 0.3),
-                "z": (0.0, 0.0),
-                "roll": (0.0, 0.0),
-                "pitch": (0.0, 0.0),
-                "yaw": (-np.pi / 12, np.pi / 12),
-            },
-            "asset_cfgs": {"receptive_object": SceneEntityCfg("receptive_object")},
-            "offset_asset_cfg": SceneEntityCfg("ur5_metal_support"),
-            "use_bottom_offset": True,
-            "action_name": "adversaryaction",
-            "action_x_index": 0,
-            "action_y_index": 1,
-            "action_yaw_index": 2,
-        },
-    )
-
-    reset_insertive_object = EventTerm(
-        func=task_mdp.adversary_reset_insertive_object_pose_from_assembled_offset,
-        mode="reset",
-        params={
-            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
-            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
-            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
-            "pose_range_b": {
-                "x": (-0.2, 0.2),
-                "y": (-0.2, 0.2),
-                "z": (0.0, 0.3),
-                "roll": (-np.pi, np.pi),
-                "pitch": (-np.pi, np.pi),
-                "yaw": (-np.pi, np.pi),
-            },
-            "action_name": "adversaryaction",
-            "action_start_index": 3,
-        },
-    )
-
-    reset_end_effector_pose = EventTerm(
-        func=task_mdp.adversary_reset_end_effector_from_action,
-        mode="reset",
-        params={
-            "dataset_dir": f"{UWLAB_CLOUD_ASSETS_DIR}/Datasets/OmniReset",
+            "reset_types": task_mdp.POSE_RESET_FAMILY_NAMES,
+            "probs": (0.25, 0.25, 0.25, 0.25),
+            "robot_cfg": SceneEntityCfg("robot"),
+            "insertive_asset_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_asset_cfg": SceneEntityCfg("receptive_object"),
             "grasped_asset_cfg": SceneEntityCfg("insertive_object"),
-            "pose_range_b": {
-                "x": (-0.15, 0.15),
-                "y": (-0.15, 0.15),
-                "z": (-0.05, 0.30),
-                "roll": (-np.pi / 4, np.pi / 4),
-                "pitch": (-np.pi / 4, np.pi / 4),
-                "yaw": (-np.pi / 4, np.pi / 4),
-            },
+            "gripper_cfg": SceneEntityCfg("robot", joint_names=["finger_joint", ".*right.*", ".*left.*"]),
             "robot_ik_cfg": SceneEntityCfg(
                 "robot", joint_names=["shoulder.*", "elbow.*", "wrist.*"], body_names="robotiq_base_link"
             ),
-            "gripper_cfg": SceneEntityCfg("robot", joint_names=["finger_joint", ".*right.*", ".*left.*"]),
-            "gripper_range": (0.0, 0.785398),
+            "offset_asset_cfg": SceneEntityCfg("ur5_metal_support"),
+            "ee_body_name": "robotiq_base_link",
+            "use_bottom_offset": True,
+            "action_low": (
+                0.2, -0.3, -np.pi,
+                -0.75, -0.75, -0.75, -np.pi, -np.pi, -np.pi,
+                -0.75, -0.75, -0.75, -np.pi, -np.pi, -np.pi,
+            ),
+            "action_high": (
+                0.7, 0.5, np.pi,
+                0.75, 0.75, 0.75, np.pi, np.pi, np.pi,
+                0.75, 0.75, 0.75, np.pi, np.pi, np.pi,
+            ),
+            "scripted_delta": (
+                0.0005, 0.0, 0.0005,
+                0.0005, 0.0, 0.0005, 0.001, 0.0, 0.001,
+                0.0005, 0.0, 0.0005, 0.001, 0.0, 0.001,
+            ),
+            "invalid_scripted_delta": (
+                0.0, 0.0, 0.0,
+                0.0, 0.0, 0.30, 0.0, 0.0, 0.0,
+                0.0, 0.0, -0.30, 0.0, 0.0, 0.0,
+            ),
+            "use_learned_delta": True,
             "action_name": "adversaryaction",
-            "action_start_index": 9,
+            "delta_scale": (
+                0.005, 0.005, 0.02,
+                0.005, 0.005, 0.005, 0.02, 0.02, 0.02,
+                0.005, 0.005, 0.005, 0.02, 0.02, 0.02,
+            ),
+            "invalid_every_n_resets": 0,
+            "invalid_count_per_family": 1,
+            "ik_iterations": 25,
+            "ik_step_scale": 0.25,
+            "debug_print": False,
+            "debug_print_interval": 20,
+            "zero_velocities": True,
         },
     )
-
 
 
 @configclass
@@ -888,6 +860,7 @@ class GenerationTerminationCfg:
                     obstacle_cfgs=[SceneEntityCfg("receptive_object")],
                 ),
             ],
+            "collision_check_chunk_size": 512,
             "max_robot_pos_deviation": 0.1,
             "max_object_pos_deviation": 0.05,
             "pos_z_threshold": -0.02,
@@ -895,6 +868,11 @@ class GenerationTerminationCfg:
             "validate_grasp_survival": True,
             "grasp_survival_pos_threshold": 0.03,
             "grasp_survival_rot_threshold": 0.75,
+            "validate_family_semantics": True,
+            "family_resting_rel_z_min": -0.05,
+            "family_resting_rel_z_max": 0.08,
+            "family_partial_rel_dist_max": 0.12,
+            "family_partial_rel_xy_max": 0.08,
         },
         time_out=True,
     )

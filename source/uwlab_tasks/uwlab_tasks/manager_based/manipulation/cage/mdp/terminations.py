@@ -20,13 +20,20 @@ from ..assembly_keypoints import Offset
 from .collision_analyzer_cfg import CollisionAnalyzerCfg
 from .pose_delta_adversary import (
     POSE_DELTA_ACCEPTED_RECORDS_ATTR,
-    POSE_DELTA_BASE_ACTION_ATTR,
-    POSE_DELTA_BASE_VALID_ATTR,
     POSE_DELTA_CANDIDATE_ACTION_ATTR,
     POSE_DELTA_CANDIDATE_VALID_ATTR,
     POSE_DELTA_COMMITTED_ACTION_ATTR,
-    POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR,
-    POSE_DELTA_RESET_TYPE_ATTR,
+    POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_DEBUG_ATTR,
+    POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR,
+    POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_ROW_IDS_ATTR,
+    POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_STATS_ATTR,
+    POSE_DELTA_FAMILY_LANE_PERTURB_DEBUG_ATTR,
+    POSE_DELTA_FAMILY_LANE_PERTURB_STATS_ATTR,
+    POSE_DELTA_FAMILY_LANE_INVALID_MASK_ATTR,
+    POSE_DELTA_FAMILY_LANE_SCRIPTED_MASK_ATTR,
+    POSE_DELTA_FAMILY_LANE_VECTOR_VALID_ATTR,
+    POSE_DELTA_FAMILY_LANE_VECTORS_ATTR,
+    POSE_RESET_FAMILY_NAMES,
     commit_pose_delta_candidate_tensors,
 )
 
@@ -244,13 +251,11 @@ class check_reset_state_success(ManagerTermBase):
         "_cage_grasp_survival_reference_valid",
         "_cage_reset_grasp_branch",
         "_cage_reset_branch_valid",
+        POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR,
+        POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_ROW_IDS_ATTR,
         POSE_DELTA_COMMITTED_ACTION_ATTR,
-        POSE_DELTA_BASE_ACTION_ATTR,
-        POSE_DELTA_BASE_VALID_ATTR,
         POSE_DELTA_CANDIDATE_ACTION_ATTR,
         POSE_DELTA_CANDIDATE_VALID_ATTR,
-        POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR,
-        POSE_DELTA_RESET_TYPE_ATTR,
     )
 
     def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedEnv):
@@ -273,6 +278,14 @@ class check_reset_state_success(ManagerTermBase):
         self.validate_grasp_survival = cfg.params.get("validate_grasp_survival", False)
         self.grasp_survival_pos_threshold = cfg.params.get("grasp_survival_pos_threshold", 0.03)
         self.grasp_survival_rot_threshold = cfg.params.get("grasp_survival_rot_threshold", 0.75)
+        self.validate_family_semantics = cfg.params.get("validate_family_semantics", False)
+        self.family_resting_rel_z_min = cfg.params.get("family_resting_rel_z_min", -0.05)
+        self.family_resting_rel_z_max = cfg.params.get("family_resting_rel_z_max", 0.08)
+        self.family_partial_rel_dist_max = cfg.params.get("family_partial_rel_dist_max", 0.12)
+        self.family_partial_rel_xy_max = cfg.params.get("family_partial_rel_xy_max", 0.08)
+        self.collision_check_chunk_size = int(cfg.params.get("collision_check_chunk_size", 0) or env.num_envs)
+        if self.collision_check_chunk_size <= 0:
+            self.collision_check_chunk_size = env.num_envs
 
         # Load gripper_approach_direction from metadata
         robot_asset = env.scene[self.robot_cfg.name]
@@ -286,7 +299,16 @@ class check_reset_state_success(ManagerTermBase):
         self.object_assets = [env.scene[cfg.name] for cfg in self.object_cfgs]
         self.robot_asset = env.scene[self.robot_cfg.name]
         self.assets_to_check = self.object_assets + [self.robot_asset]
+        self.asset_names_to_check = [cfg.name for cfg in self.object_cfgs] + [self.robot_cfg.name]
+        self.object_asset_by_name = dict(zip(self.asset_names_to_check, self.assets_to_check))
+        self.insertive_asset = self.object_asset_by_name.get("insertive_object")
+        self.receptive_asset = self.object_asset_by_name.get("receptive_object")
         self.ee_body_idx = self.robot_asset.data.body_names.index(self.ee_body_name)
+        self._debug_gripper_joint_ids = [
+            idx
+            for idx, joint_name in enumerate(self.robot_asset.data.joint_names)
+            if joint_name == "finger_joint" or "left" in joint_name or "right" in joint_name
+        ]
 
         # Optional assembly alignment filter
         self.assembly_success_prob = cfg.params.get("assembly_success_prob")
@@ -332,6 +354,8 @@ class check_reset_state_success(ManagerTermBase):
     def _copy_scene_state_ids(self, dst, src, env_ids: torch.Tensor) -> None:
         if isinstance(src, dict):
             for key, child in src.items():
+                if not isinstance(dst, dict) or key not in dst:
+                    continue
                 self._copy_scene_state_ids(dst[key], child, env_ids)
             return
         dst[env_ids] = src[env_ids].clone()
@@ -382,37 +406,205 @@ class check_reset_state_success(ManagerTermBase):
             return time_out & ~live_mask.to(device=env.device, dtype=torch.bool).view(-1)
         return time_out
 
+    def _commit_accepted_family_lane_vectors(self, env: ManagerBasedEnv, accepted_ids: torch.Tensor) -> None:
+        if accepted_ids.numel() == 0:
+            return
+        lane_vectors = getattr(env, POSE_DELTA_FAMILY_LANE_VECTORS_ATTR, None)
+        lane_vector_valid = getattr(env, POSE_DELTA_FAMILY_LANE_VECTOR_VALID_ATTR, None)
+        family_ids = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR, None)
+        candidate = getattr(env, POSE_DELTA_CANDIDATE_ACTION_ATTR, None)
+        if not (
+            isinstance(lane_vectors, torch.Tensor)
+            and lane_vectors.ndim == 3
+            and lane_vectors.shape[:2] == (len(POSE_RESET_FAMILY_NAMES), env.num_envs)
+            and isinstance(lane_vector_valid, torch.Tensor)
+            and lane_vector_valid.shape == lane_vectors.shape[:2]
+            and isinstance(family_ids, torch.Tensor)
+            and family_ids.shape == (env.num_envs,)
+            and isinstance(candidate, torch.Tensor)
+            and candidate.shape == (env.num_envs, lane_vectors.shape[-1])
+        ):
+            return
+
+        accepted_ids = accepted_ids.to(env.device)
+        local_family_ids = family_ids[accepted_ids.to(family_ids.device)].to(env.device, dtype=torch.long)
+        for family_idx in range(len(POSE_RESET_FAMILY_NAMES)):
+            lane_ids = accepted_ids[local_family_ids == family_idx]
+            if lane_ids.numel() == 0:
+                continue
+            lane_vectors[family_idx, lane_ids.to(lane_vectors.device)] = candidate[
+                lane_ids.to(candidate.device)
+            ].to(device=lane_vectors.device, dtype=lane_vectors.dtype)
+            lane_vector_valid[family_idx, lane_ids.to(lane_vector_valid.device)] = True
+
+    def _accepted_reset_diagnostics(
+        self,
+        env: ManagerBasedEnv,
+        accepted_ids: torch.Tensor,
+        previous: torch.Tensor,
+        accepted: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        previous_lane = previous
+        family_ids = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR, None)
+        lane_vectors = getattr(env, POSE_DELTA_FAMILY_LANE_VECTORS_ATTR, None)
+        if (
+            isinstance(family_ids, torch.Tensor)
+            and family_ids.shape == (env.num_envs,)
+            and isinstance(lane_vectors, torch.Tensor)
+            and lane_vectors.ndim == 3
+            and lane_vectors.shape[:2] == (len(POSE_RESET_FAMILY_NAMES), env.num_envs)
+            and lane_vectors.shape[-1] == accepted.shape[-1]
+        ):
+            local_family_ids = family_ids[accepted_ids.to(family_ids.device)].to(lane_vectors.device, dtype=torch.long)
+            valid_family = (local_family_ids >= 0) & (local_family_ids < len(POSE_RESET_FAMILY_NAMES))
+            if bool(valid_family.all().item()):
+                previous_lane = lane_vectors[
+                    local_family_ids,
+                    accepted_ids.to(lane_vectors.device),
+                ].to(device=accepted.device, dtype=accepted.dtype).detach().clone()
+
+        diagnostics: dict[str, torch.Tensor] = {
+            "accepted_reset_previous_lane_states": previous_lane,
+            "accepted_reset_candidate_states": accepted,
+            "accepted_reset_true_lane_deltas": accepted - previous_lane,
+        }
+
+        if isinstance(family_ids, torch.Tensor) and family_ids.shape == (env.num_envs,):
+            diagnostics["accepted_reset_family_ids"] = family_ids[accepted_ids.to(family_ids.device)].detach().clone()
+
+        row_ids = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_ROW_IDS_ATTR, None)
+        if isinstance(row_ids, torch.Tensor) and row_ids.shape == (env.num_envs,):
+            diagnostics["accepted_reset_row_ids"] = row_ids[accepted_ids.to(row_ids.device)].detach().clone()
+
+        scripted_mask = getattr(env, POSE_DELTA_FAMILY_LANE_SCRIPTED_MASK_ATTR, None)
+        if isinstance(scripted_mask, torch.Tensor) and scripted_mask.shape == (env.num_envs,):
+            diagnostics["accepted_reset_is_scripted"] = scripted_mask[
+                accepted_ids.to(scripted_mask.device)
+            ].detach().clone()
+
+        return diagnostics
+
+    def _maybe_record_pose_delta_candidate_validation(
+        self,
+        env: ManagerBasedEnv,
+        settling_resolved: torch.Tensor,
+        settling_success: torch.Tensor,
+        rejection_masks: dict[str, torch.Tensor],
+    ) -> None:
+        if not bool(getattr(env, POSE_DELTA_FAMILY_LANE_PERTURB_DEBUG_ATTR, False)):
+            return
+        stats = getattr(env, POSE_DELTA_FAMILY_LANE_PERTURB_STATS_ATTR, None)
+        candidate_valid = getattr(env, POSE_DELTA_CANDIDATE_VALID_ATTR, None)
+        family_ids = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR, None)
+        invalid_scripted = getattr(env, POSE_DELTA_FAMILY_LANE_INVALID_MASK_ATTR, None)
+        if not (
+            isinstance(stats, dict)
+            and isinstance(candidate_valid, torch.Tensor)
+            and candidate_valid.shape == (env.num_envs,)
+            and isinstance(family_ids, torch.Tensor)
+            and family_ids.shape == (env.num_envs,)
+        ):
+            return
+
+        resolved_candidate = settling_resolved & candidate_valid.to(device=env.device, dtype=torch.bool)
+        accepted = settling_success & candidate_valid.to(device=env.device, dtype=torch.bool)
+        rejected = resolved_candidate & ~accepted
+        if not bool(resolved_candidate.any().item()):
+            return
+
+        accepted_counts = stats.get("accepted")
+        rejected_counts = stats.get("rejected")
+        invalid_accepted_counts = stats.get("invalid_accepted")
+        invalid_rejected_counts = stats.get("invalid_rejected")
+        family_ids = family_ids.to(device=env.device, dtype=torch.long)
+        if isinstance(invalid_scripted, torch.Tensor) and invalid_scripted.shape == (env.num_envs,):
+            invalid_scripted = invalid_scripted.to(device=env.device, dtype=torch.bool)
+        else:
+            invalid_scripted = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        for family_idx in range(len(POSE_RESET_FAMILY_NAMES)):
+            family_mask = family_ids == family_idx
+            if isinstance(accepted_counts, torch.Tensor):
+                accepted_counts[family_idx] += (accepted & family_mask).sum().to(accepted_counts.dtype)
+            if isinstance(rejected_counts, torch.Tensor):
+                rejected_counts[family_idx] += (rejected & family_mask).sum().to(rejected_counts.dtype)
+            if isinstance(invalid_accepted_counts, torch.Tensor):
+                invalid_accepted_counts[family_idx] += (accepted & invalid_scripted & family_mask).sum().to(
+                    invalid_accepted_counts.dtype
+                )
+            if isinstance(invalid_rejected_counts, torch.Tensor):
+                invalid_rejected_counts[family_idx] += (rejected & invalid_scripted & family_mask).sum().to(
+                    invalid_rejected_counts.dtype
+                )
+
+        reason_counts = stats.setdefault("reject_reasons", {})
+        if isinstance(reason_counts, dict):
+            for reason, mask in rejection_masks.items():
+                count = int((rejected & mask.to(device=env.device, dtype=torch.bool)).sum().item())
+                if count > 0:
+                    reason_counts[reason] = int(reason_counts.get(reason, 0)) + count
+
+        if not (isinstance(accepted_counts, torch.Tensor) and isinstance(rejected_counts, torch.Tensor)):
+            return
+        total_resolved = int((accepted_counts.sum() + rejected_counts.sum()).item())
+        last = int(stats.get("last_resolved_print", 0))
+        interval = max(1, int(stats.get("print_interval", 20)))
+        if total_resolved - last < interval:
+            return
+        stats["last_resolved_print"] = total_resolved
+        parts = []
+        for family_idx, reset_type in enumerate(POSE_RESET_FAMILY_NAMES):
+            ok = int(accepted_counts[family_idx].item())
+            bad = int(rejected_counts[family_idx].item())
+            total = ok + bad
+            pct = 100.0 * ok / max(total, 1)
+            parts.append(f"{reset_type}={ok}/{total} ({pct:.1f}%)")
+        if isinstance(reason_counts, dict) and len(reason_counts) > 0:
+            top_reject = ", ".join(
+                f"{reason}={count}" for reason, count in sorted(reason_counts.items(), key=lambda item: -item[1])[:4]
+            )
+        else:
+            top_reject = "none"
+        if isinstance(invalid_accepted_counts, torch.Tensor) and isinstance(invalid_rejected_counts, torch.Tensor):
+            invalid_accepted_total = int(invalid_accepted_counts.sum().item())
+            invalid_resolved_total = int((invalid_accepted_counts.sum() + invalid_rejected_counts.sum()).item())
+            invalid_text = f" invalid_accept={invalid_accepted_total}/{invalid_resolved_total}"
+        else:
+            invalid_text = ""
+        print(
+            f"[CAGE family perturb] resolved total={total_resolved} "
+            + ", ".join(parts)
+            + f" top_reject={top_reject}"
+            + invalid_text,
+            flush=True,
+        )
+
     def _commit_adversary_pose_candidate(self, env: ManagerBasedEnv, settling_success: torch.Tensor) -> None:
         if not bool(settling_success.any().item()):
             return
 
         committed = getattr(env, POSE_DELTA_COMMITTED_ACTION_ATTR, None)
-        base_action = getattr(env, POSE_DELTA_BASE_ACTION_ATTR, None)
         candidate = getattr(env, POSE_DELTA_CANDIDATE_ACTION_ATTR, None)
         candidate_valid = getattr(env, POSE_DELTA_CANDIDATE_VALID_ATTR, None)
-        last_physical_delta = getattr(env, POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR, None)
         if not (
             isinstance(committed, torch.Tensor)
-            and isinstance(base_action, torch.Tensor)
             and isinstance(candidate, torch.Tensor)
             and isinstance(candidate_valid, torch.Tensor)
             and committed.shape == candidate.shape
-            and base_action.shape == candidate.shape
             and committed.ndim == 2
             and candidate_valid.shape == (env.num_envs,)
         ):
             return
 
         valid_candidate = candidate_valid.to(device=settling_success.device, dtype=torch.bool)
+        invalid_scripted = getattr(env, POSE_DELTA_FAMILY_LANE_INVALID_MASK_ATTR, None)
+        if isinstance(invalid_scripted, torch.Tensor) and invalid_scripted.shape == (env.num_envs,):
+            valid_candidate &= ~invalid_scripted.to(device=settling_success.device, dtype=torch.bool)
         accepted_ids = (settling_success & valid_candidate).nonzero(as_tuple=False).squeeze(-1)
         if accepted_ids.numel() > 0:
             target_ids = accepted_ids.to(committed.device)
             source_ids = accepted_ids.to(candidate.device)
+            previous = committed[target_ids].detach().clone()
             accepted = candidate[source_ids].to(device=committed.device, dtype=committed.dtype).detach().clone()
-            accepted_base = base_action[source_ids.to(base_action.device)].to(
-                device=committed.device, dtype=committed.dtype
-            )
-            accepted_delta = accepted - accepted_base
             records = getattr(env, POSE_DELTA_ACCEPTED_RECORDS_ATTR, None)
             if not isinstance(records, list):
                 records = []
@@ -421,21 +613,19 @@ class check_reset_state_success(ManagerTermBase):
                 {
                     "accepted_reset_env_ids": accepted_ids.detach().clone(),
                     "accepted_reset_states": accepted,
-                    "accepted_reset_deltas": accepted_delta,
+                    "accepted_reset_deltas": accepted - previous,
+                    **self._accepted_reset_diagnostics(env, accepted_ids, previous, accepted),
                 }
             )
-        commit_pose_delta_candidate_tensors(
-            committed,
-            candidate,
-            candidate_valid,
-            settling_success,
-            last_physical_delta=last_physical_delta if isinstance(last_physical_delta, torch.Tensor) else None,
-            base_action=base_action,
-        )
+            self._commit_accepted_family_lane_vectors(env, accepted_ids)
+        commit_pose_delta_candidate_tensors(committed, candidate, candidate_valid, settling_success)
 
     def _apply_grasp_survival_filter(
         self, env: ManagerBasedEnv, reset_success: torch.Tensor
     ) -> torch.Tensor:
+        self._last_grasp_survival_pos_err = torch.full((env.num_envs,), float("nan"), device=env.device)
+        self._last_grasp_survival_rot_err = torch.full((env.num_envs,), float("nan"), device=env.device)
+
         if not self.validate_grasp_survival:
             return reset_success
 
@@ -472,11 +662,411 @@ class check_reset_state_success(ManagerTermBase):
 
         pos_err = torch.linalg.norm(cur_obj_pos_ee - pos_ref[grasp_ids].to(env.device), dim=-1)
         rot_err = math_utils.quat_error_magnitude(cur_obj_quat_ee, quat_ref[grasp_ids].to(env.device))
+        self._last_grasp_survival_pos_err[grasp_ids] = pos_err
+        self._last_grasp_survival_rot_err[grasp_ids] = rot_err
         survived = (pos_err < self.grasp_survival_pos_threshold) & (rot_err < self.grasp_survival_rot_threshold)
 
         filtered_success = reset_success.clone()
         filtered_success[grasp_ids] &= survived
         return filtered_success
+
+    def _insertive_receptive_relative_pose(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if not isinstance(self.insertive_asset, RigidObject) or not isinstance(self.receptive_asset, RigidObject):
+            raise RuntimeError("CAGE family semantic validation requires insertive_object and receptive_object assets.")
+        return math_utils.subtract_frame_transforms(
+            self.receptive_asset.data.root_pos_w,
+            self.receptive_asset.data.root_quat_w,
+            self.insertive_asset.data.root_pos_w,
+            self.insertive_asset.data.root_quat_w,
+        )
+
+    def _apply_family_semantic_filter(
+        self, env: ManagerBasedEnv, reset_success: torch.Tensor
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        empty = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        rejection_masks = {
+            "family_branch": empty.clone(),
+            "family_grasp_ref": empty.clone(),
+            "family_resting": empty.clone(),
+            "family_partial": empty.clone(),
+        }
+        if not self.validate_family_semantics:
+            return reset_success, rejection_masks
+
+        family_ids = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR, None)
+        if not isinstance(family_ids, torch.Tensor) or family_ids.shape != (env.num_envs,):
+            return reset_success, rejection_masks
+
+        family_ids = family_ids.to(device=env.device, dtype=torch.long)
+        valid_family = (family_ids >= 0) & (family_ids < len(POSE_RESET_FAMILY_NAMES))
+        if not bool(valid_family.any().item()):
+            return reset_success, rejection_masks
+
+        branch = getattr(env, "_cage_reset_grasp_branch", None)
+        branch_valid = getattr(env, "_cage_reset_branch_valid", None)
+        ref_valid = getattr(env, "_cage_grasp_survival_reference_valid", None)
+        if not (
+            isinstance(branch, torch.Tensor)
+            and isinstance(branch_valid, torch.Tensor)
+            and isinstance(ref_valid, torch.Tensor)
+            and branch.shape == (env.num_envs,)
+            and branch_valid.shape == (env.num_envs,)
+            and ref_valid.shape == (env.num_envs,)
+        ):
+            rejection_masks["family_branch"] |= valid_family
+            return reset_success & ~rejection_masks["family_branch"], rejection_masks
+
+        branch = branch.to(device=env.device, dtype=torch.bool)
+        branch_valid = branch_valid.to(device=env.device, dtype=torch.bool)
+        ref_valid = ref_valid.to(device=env.device, dtype=torch.bool)
+
+        grasped_family = (
+            (family_ids == POSE_RESET_FAMILY_NAMES.index("ObjectRestingEEGrasped"))
+            | (family_ids == POSE_RESET_FAMILY_NAMES.index("ObjectAnywhereEEGrasped"))
+            | (family_ids == POSE_RESET_FAMILY_NAMES.index("ObjectPartiallyAssembledEEGrasped"))
+        )
+        nongrasp_family = family_ids == POSE_RESET_FAMILY_NAMES.index("ObjectAnywhereEEAnywhere")
+
+        rejection_masks["family_branch"] = valid_family & (~branch_valid | (branch != grasped_family))
+        rejection_masks["family_grasp_ref"] = valid_family & grasped_family & ~ref_valid
+
+        rel_pos, _ = self._insertive_receptive_relative_pose()
+        rel_xy = torch.linalg.norm(rel_pos[:, :2], dim=1)
+        rel_dist = torch.linalg.norm(rel_pos, dim=1)
+        rel_z = rel_pos[:, 2]
+
+        resting_family = family_ids == POSE_RESET_FAMILY_NAMES.index("ObjectRestingEEGrasped")
+        resting_valid = (rel_z >= self.family_resting_rel_z_min) & (rel_z <= self.family_resting_rel_z_max)
+        rejection_masks["family_resting"] = valid_family & resting_family & ~resting_valid
+
+        partial_family = family_ids == POSE_RESET_FAMILY_NAMES.index("ObjectPartiallyAssembledEEGrasped")
+        partial_valid = (rel_dist <= self.family_partial_rel_dist_max) & (rel_xy <= self.family_partial_rel_xy_max)
+        rejection_masks["family_partial"] = valid_family & partial_family & ~partial_valid
+
+        semantic_invalid = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        for mask in rejection_masks.values():
+            semantic_invalid |= mask
+        semantic_invalid &= valid_family | nongrasp_family
+        return reset_success & ~semantic_invalid, rejection_masks
+
+    def _compute_collision_free(self, env: ManagerBasedEnv, env_ids: torch.Tensor) -> torch.Tensor:
+        if len(self.collision_analyzers) == 0:
+            return torch.ones(len(env_ids), device=env.device, dtype=torch.bool)
+
+        if len(env_ids) <= self.collision_check_chunk_size:
+            return torch.all(
+                torch.stack([collision_analyzer(env, env_ids) for collision_analyzer in self.collision_analyzers]),
+                dim=0,
+            )
+
+        collision_free = torch.ones(len(env_ids), device=env.device, dtype=torch.bool)
+        for start in range(0, len(env_ids), self.collision_check_chunk_size):
+            end = min(start + self.collision_check_chunk_size, len(env_ids))
+            chunk_env_ids = env_ids[start:end]
+            collision_free[start:end] = torch.all(
+                torch.stack([collision_analyzer(env, chunk_env_ids) for collision_analyzer in self.collision_analyzers]),
+                dim=0,
+            )
+        return collision_free
+
+    def _bootstrap_replay_row_text(self, env: ManagerBasedEnv, env_id: int) -> str:
+        row_ids = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_ROW_IDS_ATTR, None)
+        if not isinstance(row_ids, torch.Tensor) or row_ids.shape != (env.num_envs,):
+            return " row=unknown"
+        return f" row={int(row_ids[env_id].item())}"
+
+    def _bootstrap_replay_family_geometry_text(self, env_id: int) -> str:
+        if not self.validate_family_semantics:
+            return ""
+        if not isinstance(self.insertive_asset, RigidObject) or not isinstance(self.receptive_asset, RigidObject):
+            return ""
+        env_id_tensor = torch.tensor([env_id], device=self._env.device, dtype=torch.long)
+        rel_pos, _ = math_utils.subtract_frame_transforms(
+            self.receptive_asset.data.root_pos_w[env_id_tensor],
+            self.receptive_asset.data.root_quat_w[env_id_tensor],
+            self.insertive_asset.data.root_pos_w[env_id_tensor],
+            self.insertive_asset.data.root_quat_w[env_id_tensor],
+        )
+        rel_xy = torch.linalg.norm(rel_pos[:, :2], dim=1)
+        rel_dist = torch.linalg.norm(rel_pos, dim=1)
+        return (
+            f" family_rel_dist={float(rel_dist.item()):.4f}"
+            f" family_rel_xy={float(rel_xy.item()):.4f}"
+            f" family_rel_z={float(rel_pos[0, 2].item()):.4f}"
+        )
+
+    def _bootstrap_replay_gripper_text(self, env: ManagerBasedEnv, env_id: int) -> str:
+        parts = []
+        gripper_action_target = getattr(env, "_cage_adversary_gripper_action_target", None)
+        if isinstance(gripper_action_target, torch.Tensor) and gripper_action_target.shape == (env.num_envs,):
+            parts.append(f"gripper_action_target={float(gripper_action_target[env_id].item()):.3f}")
+
+        target_joint_pos = getattr(env, "_cage_adversary_settling_robot_joint_pos_target", None)
+        target_joint_valid = getattr(env, "_cage_adversary_settling_robot_joint_target_valid", None)
+        if isinstance(target_joint_valid, torch.Tensor) and target_joint_valid.shape == (env.num_envs,):
+            parts.append(f"joint_target_valid={bool(target_joint_valid[env_id].item())}")
+
+        if (
+            self._debug_gripper_joint_ids
+            and isinstance(target_joint_pos, torch.Tensor)
+            and target_joint_pos.shape == (env.num_envs, self.robot_asset.num_joints)
+        ):
+            joint_ids = torch.as_tensor(self._debug_gripper_joint_ids, device=env.device, dtype=torch.long)
+            current = self.robot_asset.data.joint_pos[env_id, joint_ids]
+            target = target_joint_pos[env_id, joint_ids].to(env.device)
+            velocity = self.robot_asset.data.joint_vel[env_id, joint_ids]
+            parts.append(f"gripper_joint_err={float((current - target).abs().amax().item()):.5f}")
+            parts.append(f"gripper_joint_vel={float(velocity.abs().amax().item()):.5f}")
+            parts.append(f"gripper_joint_cur_mean={float(current.mean().item()):.5f}")
+            parts.append(f"gripper_joint_tgt_mean={float(target.mean().item()):.5f}")
+
+        return (" " + " ".join(parts)) if parts else ""
+
+    def _bootstrap_replay_velocity_text(self, env_id: int) -> str:
+        parts = []
+        for asset_name, asset in zip(self.asset_names_to_check, self.assets_to_check):
+            if isinstance(asset, Articulation):
+                joint_vel = asset.data.joint_vel[env_id].abs()
+                parts.append(f"{asset_name}_jv_sum={float(joint_vel.sum().item()):.5f}")
+                parts.append(f"{asset_name}_jv_max={float(joint_vel.amax().item()):.5f}")
+            elif isinstance(asset, RigidObject):
+                lin_vel = asset.data.body_lin_vel_w[env_id].abs()
+                ang_vel = asset.data.body_ang_vel_w[env_id].abs()
+                parts.append(f"{asset_name}_lin_sum={float(lin_vel.sum().item()):.5f}")
+                parts.append(f"{asset_name}_lin_max={float(lin_vel.amax().item()):.5f}")
+                parts.append(f"{asset_name}_ang_sum={float(ang_vel.sum().item()):.5f}")
+                parts.append(f"{asset_name}_ang_max={float(ang_vel.amax().item()):.5f}")
+            elif isinstance(asset, RigidObjectCollection):
+                lin_vel = asset.data.object_lin_vel_w[env_id].abs()
+                ang_vel = asset.data.object_ang_vel_w[env_id].abs()
+                parts.append(f"{asset_name}_lin_sum={float(lin_vel.sum().item()):.5f}")
+                parts.append(f"{asset_name}_lin_max={float(lin_vel.amax().item()):.5f}")
+                parts.append(f"{asset_name}_ang_sum={float(ang_vel.sum().item()):.5f}")
+                parts.append(f"{asset_name}_ang_max={float(ang_vel.amax().item()):.5f}")
+        return (" " + " ".join(parts)) if parts else ""
+
+    def _bootstrap_replay_grasp_reference_text(self, env: ManagerBasedEnv, env_id: int) -> str:
+        branch = getattr(env, "_cage_reset_grasp_branch", None)
+        branch_valid = getattr(env, "_cage_reset_branch_valid", None)
+        ref_valid = getattr(env, "_cage_grasp_survival_reference_valid", None)
+        parts = []
+        if isinstance(branch_valid, torch.Tensor) and branch_valid.shape == (env.num_envs,):
+            parts.append(f"branch_valid={bool(branch_valid[env_id].item())}")
+        if isinstance(branch, torch.Tensor) and branch.shape == (env.num_envs,):
+            parts.append(f"grasp_branch={bool(branch[env_id].item())}")
+        if isinstance(ref_valid, torch.Tensor) and ref_valid.shape == (env.num_envs,):
+            parts.append(f"ref_valid={bool(ref_valid[env_id].item())}")
+
+        pos_ref = getattr(env, "_cage_grasp_survival_expected_obj_pos_ee", None)
+        quat_ref = getattr(env, "_cage_grasp_survival_expected_obj_quat_ee", None)
+        object_asset_name = getattr(env, "_cage_grasp_survival_object_asset_name", None)
+        if (
+            isinstance(ref_valid, torch.Tensor)
+            and ref_valid.shape == (env.num_envs,)
+            and bool(ref_valid[env_id].item())
+            and isinstance(pos_ref, torch.Tensor)
+            and pos_ref.shape == (env.num_envs, 3)
+            and isinstance(quat_ref, torch.Tensor)
+            and quat_ref.shape == (env.num_envs, 4)
+            and isinstance(object_asset_name, str)
+        ):
+            env_id_tensor = torch.tensor([env_id], device=env.device, dtype=torch.long)
+            insertive_object = env.scene[object_asset_name]
+            ee_pos_w = self.robot_asset.data.body_link_pos_w[env_id_tensor, self.ee_body_idx]
+            ee_quat_w = self.robot_asset.data.body_link_quat_w[env_id_tensor, self.ee_body_idx]
+            obj_pos_w = insertive_object.data.root_pos_w[env_id_tensor]
+            obj_quat_w = insertive_object.data.root_quat_w[env_id_tensor]
+            cur_obj_pos_ee, cur_obj_quat_ee = math_utils.subtract_frame_transforms(
+                ee_pos_w, ee_quat_w, obj_pos_w, obj_quat_w
+            )
+            pos_err = torch.linalg.norm(cur_obj_pos_ee - pos_ref[env_id_tensor].to(env.device), dim=-1)
+            rot_err = math_utils.quat_error_magnitude(cur_obj_quat_ee, quat_ref[env_id_tensor].to(env.device))
+            parts.append(f"ref_pos_err={float(pos_err.item()):.4f}")
+            parts.append(f"ref_rot_err={float(rot_err.item()):.4f}")
+
+        return (" " + " ".join(parts)) if parts else ""
+
+    def _maybe_print_bootstrap_replay_failure_details(
+        self,
+        env: ManagerBasedEnv,
+        stats: dict,
+        resolved_mask: torch.Tensor,
+        reset_success: torch.Tensor,
+        rejection_masks: dict[str, torch.Tensor],
+        family_ids: torch.Tensor,
+        current_step_stable: torch.Tensor,
+        gripper_approach_z: torch.Tensor,
+        asset_pos_deviations: dict[str, torch.Tensor],
+    ) -> None:
+        max_detail_prints = 32
+        detail_print_count = int(stats.get("detail_print_count", 0))
+        if detail_print_count >= max_detail_prints:
+            return
+
+        failed_ids = (resolved_mask & ~reset_success).nonzero(as_tuple=False).squeeze(-1)
+        if failed_ids.numel() == 0:
+            return
+
+        remaining = max_detail_prints - detail_print_count
+        target_family = POSE_RESET_FAMILY_NAMES.index("ObjectAnywhereEEGrasped")
+        failed_family_ids = family_ids[failed_ids.to(family_ids.device)].to(env.device, dtype=torch.long)
+        target_failed_ids = failed_ids[failed_family_ids == target_family]
+        other_failed_ids = failed_ids[failed_family_ids != target_family]
+        failed_ids = torch.cat((target_failed_ids, other_failed_ids), dim=0)[: min(remaining, 8)]
+        for env_id in failed_ids.detach().cpu().tolist():
+            family_idx = int(family_ids[env_id].item())
+            family_name = (
+                POSE_RESET_FAMILY_NAMES[family_idx]
+                if 0 <= family_idx < len(POSE_RESET_FAMILY_NAMES)
+                else f"unknown:{family_idx}"
+            )
+            reasons = [
+                reason
+                for reason, reason_mask in rejection_masks.items()
+                if bool(reason_mask[env_id].item())
+            ]
+            reason_text = ",".join(reasons) if reasons else "none"
+            drift_parts = []
+            for asset_name in ("robot", "insertive_object", "receptive_object"):
+                drift = asset_pos_deviations.get(asset_name)
+                if isinstance(drift, torch.Tensor):
+                    drift_parts.append(f"{asset_name}_drift={float(drift[env_id].item()):.4f}")
+            grasp_pos_err = getattr(self, "_last_grasp_survival_pos_err", None)
+            grasp_rot_err = getattr(self, "_last_grasp_survival_rot_err", None)
+            if isinstance(grasp_pos_err, torch.Tensor) and isinstance(grasp_rot_err, torch.Tensor):
+                grasp_text = (
+                    f" grasp_pos_err={float(grasp_pos_err[env_id].item()):.4f}"
+                    f" grasp_rot_err={float(grasp_rot_err[env_id].item()):.4f}"
+                )
+            else:
+                grasp_text = ""
+            message = (
+                "[CAGE bootstrap fail] "
+                f"env={env_id} family={family_name} reasons={reason_text} "
+                + self._bootstrap_replay_row_text(env, env_id)
+                + " "
+                f"stable_count={int(self.stability_counter[env_id].item())}/{self.consecutive_stability_steps} "
+                f"current_stable={bool(current_step_stable[env_id].item())} "
+                f"approach_z={float(gripper_approach_z[env_id].item()):.3f} "
+                + " ".join(drift_parts)
+                + grasp_text
+                + self._bootstrap_replay_family_geometry_text(env_id)
+                + self._bootstrap_replay_gripper_text(env, env_id)
+                + self._bootstrap_replay_velocity_text(env_id)
+                + self._bootstrap_replay_grasp_reference_text(env, env_id)
+            )
+            print(message, flush=True)
+            detail_print_count += 1
+        stats["detail_print_count"] = detail_print_count
+
+    def _maybe_print_bootstrap_replay_validation(
+        self,
+        env: ManagerBasedEnv,
+        resolved_mask: torch.Tensor,
+        reset_success: torch.Tensor,
+        rejection_masks: dict[str, torch.Tensor],
+        current_step_stable: torch.Tensor,
+        gripper_approach_z: torch.Tensor,
+        asset_pos_deviations: dict[str, torch.Tensor],
+    ) -> None:
+        if not bool(getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_DEBUG_ATTR, False)):
+            return
+
+        family_ids = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR, None)
+        if not isinstance(family_ids, torch.Tensor) or family_ids.shape != (env.num_envs,):
+            return
+
+        resolved_ids = resolved_mask.nonzero(as_tuple=False).squeeze(-1)
+        if resolved_ids.numel() == 0:
+            return
+
+        stats = getattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_STATS_ATTR, None)
+        if not isinstance(stats, dict) or not stats:
+            stats = {
+                "resolved": torch.zeros(len(POSE_RESET_FAMILY_NAMES), device=env.device, dtype=torch.long),
+                "success": torch.zeros(len(POSE_RESET_FAMILY_NAMES), device=env.device, dtype=torch.long),
+                "rejections": {
+                    name: torch.zeros(len(POSE_RESET_FAMILY_NAMES), device=env.device, dtype=torch.long)
+                    for name in rejection_masks
+                },
+                "last_print_total": 0,
+                "detail_print_count": 0,
+            }
+            setattr(env, POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_STATS_ATTR, stats)
+        else:
+            for name in rejection_masks:
+                if name not in stats["rejections"]:
+                    stats["rejections"][name] = torch.zeros(
+                        len(POSE_RESET_FAMILY_NAMES), device=env.device, dtype=torch.long
+                    )
+
+        ids = resolved_ids.to(env.device)
+        families = family_ids[ids].to(env.device, dtype=torch.long)
+        valid_family = (families >= 0) & (families < len(POSE_RESET_FAMILY_NAMES))
+        ids = ids[valid_family]
+        families = families[valid_family]
+        if ids.numel() == 0:
+            return
+
+        success_values = reset_success[ids].to(env.device, dtype=torch.bool)
+        for family_idx in range(len(POSE_RESET_FAMILY_NAMES)):
+            mask = families == family_idx
+            if not bool(mask.any().item()):
+                continue
+            stats["resolved"][family_idx] += mask.sum().to(torch.long)
+            stats["success"][family_idx] += success_values[mask].sum().to(torch.long)
+            for reason, reason_mask in rejection_masks.items():
+                stats["rejections"][reason][family_idx] += reason_mask[ids][mask].sum().to(torch.long)
+
+        total = int(stats["resolved"].sum().item())
+        print_every = max(1, env.num_envs)
+        if total - int(stats["last_print_total"]) < print_every:
+            return
+        stats["last_print_total"] = total
+
+        self._maybe_print_bootstrap_replay_failure_details(
+            env,
+            stats,
+            resolved_mask,
+            reset_success,
+            rejection_masks,
+            family_ids,
+            current_step_stable,
+            gripper_approach_z,
+            asset_pos_deviations,
+        )
+
+        success_total = int(stats["success"].sum().item())
+        family_parts = []
+        for family_idx, family_name in enumerate(POSE_RESET_FAMILY_NAMES):
+            resolved = int(stats["resolved"][family_idx].item())
+            success = int(stats["success"][family_idx].item())
+            rate = 100.0 * success / max(resolved, 1)
+            family_reasons = {
+                reason: int(values[family_idx].item())
+                for reason, values in stats["rejections"].items()
+                if int(values[family_idx].item()) > 0
+            }
+            top_family_reasons = sorted(family_reasons.items(), key=lambda item: item[1], reverse=True)[:3]
+            family_reason_text = ", ".join(
+                f"{reason}={count}" for reason, count in top_family_reasons
+            ) or "none"
+            family_parts.append(f"{family_name}={success}/{resolved} ({rate:.1f}%, reject={family_reason_text})")
+
+        reason_totals = {
+            reason: int(values.sum().item())
+            for reason, values in stats["rejections"].items()
+            if int(values.sum().item()) > 0
+        }
+        top_reasons = sorted(reason_totals.items(), key=lambda item: item[1], reverse=True)[:4]
+        reason_text = ", ".join(f"{reason}={count}" for reason, count in top_reasons) or "none"
+        overall_rate = 100.0 * success_total / max(total, 1)
+        print(
+            f"[CAGE bootstrap validation] success={success_total}/{total} ({overall_rate:.1f}%) "
+            + ", ".join(family_parts)
+            + f" top_reject={reason_text}",
+            flush=True,
+        )
 
     def reset(self, env_ids: torch.Tensor | None = None) -> None:
         super().reset(env_ids)
@@ -529,6 +1119,12 @@ class check_reset_state_success(ManagerTermBase):
         validate_grasp_survival: bool = False,
         grasp_survival_pos_threshold: float = 0.03,
         grasp_survival_rot_threshold: float = 0.75,
+        validate_family_semantics: bool = False,
+        family_resting_rel_z_min: float = -0.05,
+        family_resting_rel_z_max: float = 0.08,
+        family_partial_rel_dist_max: float = 0.12,
+        family_partial_rel_xy_max: float = 0.08,
+        collision_check_chunk_size: int = 0,
     ) -> torch.Tensor:
 
         # Check time out
@@ -545,8 +1141,9 @@ class check_reset_state_success(ManagerTermBase):
             self.gripper_approach_direction, device=env.device, dtype=torch.float32
         ).expand(env.num_envs, -1)
         gripper_approach_world = math_utils.quat_apply(ee_quat, gripper_approach_local)
+        gripper_approach_z = gripper_approach_world[:, 2]
         gripper_orientation_within_range = (
-            gripper_approach_world[:, 2] < -0.5
+            gripper_approach_z < -0.5
         )  # cos(60°) = 0.5, so z < -0.5 for 60° cone
 
         # Check if asset velocities are small
@@ -572,7 +1169,8 @@ class check_reset_state_success(ManagerTermBase):
         # Reset initial positions on first check or after env reset
         excessive_pose_deviation = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
         pos_below_threshold = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
-        for asset in self.assets_to_check:
+        asset_pos_deviations: dict[str, torch.Tensor] = {}
+        for asset_name, asset in zip(self.asset_names_to_check, self.assets_to_check):
             if asset is self.robot_asset:
                 asset_pos = asset.data.body_link_pos_w[:, self.ee_body_idx].clone()
             else:
@@ -586,6 +1184,7 @@ class check_reset_state_success(ManagerTermBase):
             # Asset has excessive pose deviation if position exceeds thresholds
             pos_deviation = (asset_pos - asset.initial_pos).norm(dim=1)
             valid_pos_deviation = torch.where(~skip_check, pos_deviation, torch.zeros_like(pos_deviation))
+            asset_pos_deviations[asset_name] = valid_pos_deviation
             if asset is self.robot_asset:
                 excessive_pose_deviation |= valid_pos_deviation > self.max_robot_pos_deviation
             else:
@@ -596,10 +1195,7 @@ class check_reset_state_success(ManagerTermBase):
 
         # Check for collisions between gripper and object
         all_env_ids = torch.arange(env.num_envs, device=env.device)
-        collision_free = torch.all(
-            torch.stack([collision_analyzer(env, all_env_ids) for collision_analyzer in self.collision_analyzers]),
-            dim=0,
-        )
+        collision_free = self._compute_collision_free(env, all_env_ids)
 
         reset_success = (
             (~abnormal_gripper_state)
@@ -621,9 +1217,47 @@ class check_reset_state_success(ManagerTermBase):
             assembly_success = (xyz_dist < self.assembly_pos_threshold) & (euler_xy_dist < self.assembly_ori_threshold)
             assembly_match = torch.where(self.require_assembly_success, assembly_success, ~assembly_success)
             reset_success = reset_success & assembly_match
+        else:
+            assembly_match = torch.ones(env.num_envs, device=env.device, dtype=torch.bool)
 
-        reset_success = self._apply_grasp_survival_filter(env, reset_success)
-        settling_success = reset_success & self._settling_resolution_mask(env, time_out)
+        reset_success_before_grasp = reset_success.clone()
+        reset_success_after_grasp = self._apply_grasp_survival_filter(env, reset_success)
+        reset_success, family_rejection_masks = self._apply_family_semantic_filter(env, reset_success_after_grasp)
+        settling_resolved = self._settling_resolution_mask(env, time_out)
+        rejection_masks = {
+            "abnormal_gripper": abnormal_gripper_state,
+            "bad_gripper_orientation": ~gripper_orientation_within_range,
+            "unstable": ~stability_reached,
+            "pose_drift": excessive_pose_deviation,
+            "z_below": pos_below_threshold,
+            "collision": ~collision_free,
+            "assembly": ~assembly_match,
+            "grasp_survival": reset_success_before_grasp & ~reset_success_after_grasp,
+        }
+        rejection_masks.update(family_rejection_masks)
+        invalid_scripted = getattr(env, POSE_DELTA_FAMILY_LANE_INVALID_MASK_ATTR, None)
+        if isinstance(invalid_scripted, torch.Tensor) and invalid_scripted.shape == (env.num_envs,):
+            invalid_scripted = invalid_scripted.to(device=env.device, dtype=torch.bool)
+        else:
+            invalid_scripted = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+        rejection_masks["scripted_invalid"] = invalid_scripted
+        reset_success = reset_success & ~invalid_scripted
+        self._maybe_print_bootstrap_replay_validation(
+            env,
+            settling_resolved,
+            reset_success,
+            rejection_masks,
+            current_step_stable,
+            gripper_approach_z,
+            asset_pos_deviations,
+        )
+        settling_success = reset_success & settling_resolved
+        self._maybe_record_pose_delta_candidate_validation(
+            env,
+            settling_resolved,
+            settling_success,
+            rejection_masks,
+        )
         self._commit_adversary_pose_candidate(env, settling_success)
         self._cache_reset_success_state(env, settling_success)
 

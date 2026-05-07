@@ -6,19 +6,34 @@ import torch
 
 
 POSE_DELTA_COMMITTED_ACTION_ATTR = "_cage_adversary_pose_committed_action"
-POSE_DELTA_BASE_ACTION_ATTR = "_cage_adversary_pose_base_action"
-POSE_DELTA_BASE_VALID_ATTR = "_cage_adversary_pose_base_valid"
 POSE_DELTA_CANDIDATE_ACTION_ATTR = "_cage_adversary_pose_candidate_action"
 POSE_DELTA_CANDIDATE_VALID_ATTR = "_cage_adversary_pose_candidate_valid"
-POSE_DELTA_LAST_PHYSICAL_DELTA_ATTR = "_cage_adversary_pose_last_physical_delta"
 POSE_DELTA_ACCEPTED_RECORDS_ATTR = "_cage_adversary_pose_accepted_records"
-POSE_DELTA_RESET_TYPE_ATTR = "_cage_adversary_pose_reset_type"
+POSE_DELTA_FAMILY_BOOTSTRAP_DATASETS_ATTR = "_cage_adversary_family_bootstrap_datasets"
+POSE_DELTA_FAMILY_BOOTSTRAP_COUNTS_ATTR = "_cage_adversary_family_bootstrap_counts"
+POSE_DELTA_FAMILY_BOOTSTRAP_PAIR_ATTR = "_cage_adversary_family_bootstrap_pair"
+POSE_DELTA_FAMILY_BOOTSTRAP_ROW_INDICES_ATTR = "_cage_adversary_family_bootstrap_row_indices"
+POSE_DELTA_FAMILY_BOOTSTRAP_TYPES_ATTR = "_cage_adversary_family_bootstrap_types"
+POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_DEBUG_ATTR = "_cage_family_bootstrap_replay_debug_enabled"
+POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_FAMILY_IDS_ATTR = "_cage_family_bootstrap_replay_family_ids"
+POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_ROW_IDS_ATTR = "_cage_family_bootstrap_replay_row_ids"
+POSE_DELTA_FAMILY_BOOTSTRAP_REPLAY_STATS_ATTR = "_cage_family_bootstrap_replay_validation_stats"
+POSE_DELTA_FAMILY_LANE_ROW_IDS_ATTR = "_cage_adversary_family_lane_row_ids"
+POSE_DELTA_FAMILY_LANE_STATES_ATTR = "_cage_adversary_family_lane_states"
+POSE_DELTA_FAMILY_LANE_VECTORS_ATTR = "_cage_adversary_family_lane_vectors"
+POSE_DELTA_FAMILY_LANE_VECTOR_VALID_ATTR = "_cage_adversary_family_lane_vector_valid"
+POSE_DELTA_FAMILY_LANE_INVALID_MASK_ATTR = "_cage_adversary_family_lane_invalid_mask"
+POSE_DELTA_FAMILY_LANE_CONTEXT_VALID_ATTR = "_cage_adversary_family_lane_context_valid"
+POSE_DELTA_FAMILY_LANE_SCRIPTED_MASK_ATTR = "_cage_adversary_family_lane_scripted_mask"
+POSE_DELTA_FAMILY_LANE_PERTURB_DEBUG_ATTR = "_cage_adversary_family_lane_perturb_debug"
+POSE_DELTA_FAMILY_LANE_PERTURB_STATS_ATTR = "_cage_adversary_family_lane_perturb_stats"
 
-POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_ANYWHERE = 0
-POSE_RESET_TYPE_OBJECT_RESTING_EE_GRASPED = 1
-POSE_RESET_TYPE_OBJECT_ANYWHERE_EE_GRASPED = 2
-POSE_RESET_TYPE_OBJECT_PARTIALLY_ASSEMBLED_EE_GRASPED = 3
-POSE_RESET_TYPE_PROBS = (0.25, 0.25, 0.25, 0.25)
+POSE_RESET_FAMILY_NAMES = (
+    "ObjectAnywhereEEAnywhere",
+    "ObjectRestingEEGrasped",
+    "ObjectAnywhereEEGrasped",
+    "ObjectPartiallyAssembledEEGrasped",
+)
 
 POSE_RESET_STATE_NAMES = (
     "receptive_object_x",
@@ -51,7 +66,9 @@ def compute_pose_delta_candidate(
     """Convert raw adversary delta commands into bounded physical reset actions."""
 
     candidate = committed_actions + torch.tanh(raw_actions) * delta_scale
-    return torch.clamp(candidate, action_low, action_high)
+    effective_low = torch.minimum(action_low, committed_actions)
+    effective_high = torch.maximum(action_high, committed_actions)
+    return torch.clamp(candidate, effective_low, effective_high)
 
 
 def commit_pose_delta_candidate_tensors(
@@ -59,8 +76,6 @@ def commit_pose_delta_candidate_tensors(
     candidate: torch.Tensor,
     candidate_valid: torch.Tensor,
     commit_mask: torch.Tensor,
-    last_physical_delta: torch.Tensor | None = None,
-    base_action: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Commit prepared pose adversary candidates for successful settling envs."""
 
@@ -70,15 +85,5 @@ def commit_pose_delta_candidate_tensors(
     if commit_ids.numel() > 0:
         target_ids = commit_ids.to(committed.device)
         source_ids = commit_ids.to(candidate.device)
-        accepted = candidate[source_ids].to(device=committed.device, dtype=committed.dtype)
-        if base_action is not None:
-            base = base_action[source_ids.to(base_action.device)].to(device=committed.device, dtype=committed.dtype)
-        else:
-            base = committed[target_ids]
-        accepted_delta = accepted - base
-        committed[target_ids] = accepted
-        if last_physical_delta is not None:
-            last_physical_delta[target_ids] = accepted_delta.to(
-                device=last_physical_delta.device, dtype=last_physical_delta.dtype
-            )
+        committed[target_ids] = candidate[source_ids].to(device=committed.device, dtype=committed.dtype)
     return commit_ids

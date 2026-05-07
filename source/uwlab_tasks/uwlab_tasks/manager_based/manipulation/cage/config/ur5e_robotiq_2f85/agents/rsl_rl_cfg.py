@@ -100,7 +100,7 @@ class AdversaryBaseRunner(RslRlBaseRunnerCfg):
     beta_gen_reward: float = 1.0
 
     inline_settling: dict = {
-        "settle_max_steps": 20,               # 2.0s / 0.1s control-step
+        "settle_max_steps": 40,               # 4.0s / 0.1s control-step
         "invalid_settle_penalty": -1.0,       # teacher reward for exhausted settle proposals
         "max_resample_retries": 20,           # avoid hard LIVE shifts from early settle failures
         "force_live_after_max_retries": False,
